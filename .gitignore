@@ -6,7 +6,10 @@
 *.suo
 *.user
 *.userosscache
+*.vcxproj
 *.vcxproj.user
+*.vcxproj.filters
+*.sln
 *.vc.db
 *.opensdf
 *.sdf

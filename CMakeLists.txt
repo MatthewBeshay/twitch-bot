@@ -23,18 +23,36 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# find Boost (system + json) and OpenSSL
+# ─── Dependencies ─────────────────────────────────────────────────────────────
 find_package(Boost 1.78 REQUIRED COMPONENTS system json)
 find_package(OpenSSL REQUIRED)
 
-# Library target
-add_library(TwitchBot
+# ─── Source File Organization ─────────────────────────────────────────────────
+set(TWITCHBOT_HEADERS
+  include/twitch_bot/config.hpp
+  include/twitch_bot/faceit_client.hpp
+  include/twitch_bot/http_client.hpp
+  include/twitch_bot/irc_socket.hpp
+  include/twitch_bot/twitch_bot.hpp
+  include/utils/timer.hpp
+)
+
+set(TWITCHBOT_SOURCES
   src/config.cpp
   src/faceit_client.cpp
   src/http_client.cpp
   src/irc_socket.cpp
   src/twitch_bot.cpp
+  src/main.cpp
+  src/twitch_bot.cpp
 )
+
+# Visual Studio grouping
+source_group("Header Files" FILES ${TWITCHBOT_HEADERS})
+source_group("Source Files" FILES ${TWITCHBOT_SOURCES})
+
+# ─── Library Target ───────────────────────────────────────────────────────────
+add_library(TwitchBot ${TWITCHBOT_HEADERS} ${TWITCHBOT_SOURCES})
 
 target_include_directories(TwitchBot
   PUBLIC
@@ -50,6 +68,11 @@ target_link_libraries(TwitchBot
     OpenSSL::Crypto
 )
 
-# Executable
+set_target_properties(TwitchBot PROPERTIES FOLDER "TwitchBot")
+
+# ─── Executable Target ────────────────────────────────────────────────────────
 add_executable(twitchbot_app src/main.cpp)
+
 target_link_libraries(twitchbot_app PRIVATE TwitchBot)
+
+set_target_properties(twitchbot_app PROPERTIES FOLDER "TwitchBot")
