@@ -1,0 +1,12 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25 },
+  "configurePresets": [
+    {
+      "name":         "vs2022-x64",
+      "generator":    "Visual Studio 17 2022",
+      "architecture": "x64",
+      "toolchainFile":"${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake"
+    }
+  ]
+}

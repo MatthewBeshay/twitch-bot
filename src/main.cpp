@@ -8,11 +8,11 @@ int main() {
         auto cfg = env::Config::load();
 
         TwitchBot bot{
-            /* oauthToken      = */ cfg.twitchChatOauthToken,
-            /* clientId        = */ cfg.twitchAppClientId,
-            /* clientSecret    = */ cfg.twitchAppClientSecret,
-            /* controlChannel  = */ cfg.twitchBotChannel,
-            /* faceitApiKey    = */ cfg.faceitApiKey
+            /* oauthToken      = */ cfg.twitchChatOauthToken_,
+            /* clientId        = */ cfg.twitchAppClientId_,
+            /* clientSecret    = */ cfg.twitchAppClientSecret_,
+            /* controlChannel  = */ cfg.twitchBotChannel_,
+            /* faceitApiKey    = */ cfg.faceitApiKey_
         };
 
         bot.run();
