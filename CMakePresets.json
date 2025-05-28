@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 25 },
+  "cmakeMinimumRequired": { "major": 3, "minor": 27 },
   "configurePresets": [
     {
       "name":         "vs2022-x64",
