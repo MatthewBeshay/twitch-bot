@@ -1,0 +1,14 @@
+{
+  "dependencies": [
+    {
+      "name": "boost-asio",
+      "features": [
+        "ssl"
+      ]
+    },
+    "cpprestsdk",
+    "nlohmann-json",
+    "openssl",
+    "boost-beast"
+  ]
+}
