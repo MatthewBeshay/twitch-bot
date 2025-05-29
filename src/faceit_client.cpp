@@ -23,12 +23,12 @@ static constexpr std::string_view api_port = "443";
 
 // HTTP status -> human-readable reason
 static const std::map<int,std::string> kStatusReasons = {
-    {200, "OK – Player stats for matches"},
-    {401, "Unauthorized – check your API key"},
-    {403, "Forbidden – access denied"},
-    {404, "Not Found – resource missing"},
-    {429, "Too Many Requests – rate limit exceeded"},
-    {503, "Temporarily Unavailable – server busy"}
+    {200, "OK - Player stats for matches"},
+    {401, "Unauthorized - check your API key"},
+    {403, "Forbidden - access denied"},
+    {404, "Not Found - resource missing"},
+    {429, "Too Many Requests - rate limit exceeded"},
+    {503, "Temporarily Unavailable - server busy"}
 };
 
 static std::string reasonFor(int status)
@@ -181,7 +181,7 @@ Client::sendRequest(std::string_view host,
         hdrs.emplace("Authorization", "Bearer " + apiKey_);
 
     try {
-        // May throw std::runtime_error("status=XYZ …")
+        // May throw std::runtime_error("status=XYZ ...")
         co_return co_await http_client::get(
             host, api_port, std::move(target),
             hdrs, ioContext_, sslContext_);
@@ -195,7 +195,7 @@ Client::sendRequest(std::string_view host,
 
         std::cerr
             << "[FACEIT][" << host << target << "] "
-            << "HTTP " << code << " – " << reasonFor(code)
+            << "HTTP " << code << " - " << reasonFor(code)
             << "\n    underlying: " << what << "\n";
         throw;
     }

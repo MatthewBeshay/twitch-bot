@@ -26,7 +26,7 @@ public:
     explicit Client(std::string apiKey);
 
     /// @brief Lookup a player by nickname (v4).
-    /// @param nickname  Player’s display name.
+    /// @param nickname  Player's display name.
     /// @param game      Game slug (default "cs2").
     /// @returns Parsed JSON of player details.
     boost::asio::awaitable<json>
@@ -78,7 +78,7 @@ private:
                 std::string      target,
                 bool             includeAuth);
 
-    /// @brief Build “/path?key=val&…” with URL-encoding.
+    /// @brief Build "/path?key=val&..." with URL-encoding.
     static std::string
     buildTarget(std::string_view base,
                 std::vector<std::pair<std::string_view,std::string>> const& queries);

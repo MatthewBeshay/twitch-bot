@@ -27,7 +27,7 @@ struct IrcMessage
     std::string_view                                      prefix;   // e.g. ":foo!foo@foo.tmi.twitch.tv"
     std::string_view                                      command;  // e.g. "PRIVMSG"
     std::vector<std::string_view>                         params;
-    std::string_view                                      trailing; // the “:rest of the line”
+    std::string_view                                      trailing; // the ":rest of the line"
 };
 
 /// Twitch chat bot (IRC->WebSocket+SSL) with FACEIT & Helix integrations.

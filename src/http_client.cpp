@@ -121,7 +121,7 @@ asio::awaitable<json> get(
       case 200: break;
       case 401: throw std::runtime_error("401 Unauthorized");
       case 403: throw std::runtime_error("403 Forbidden");
-      // … handle others …
+      // ... handle others ...
       default:  throw std::runtime_error("HTTP " + std::to_string(res.result_int()));
     }
 
