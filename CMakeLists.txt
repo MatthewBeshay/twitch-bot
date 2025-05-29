@@ -1,34 +1,50 @@
-cmake_minimum_required(VERSION 3.27)
-
-# Silence the old FindBoost removal warning
-cmake_policy(SET CMP0167 NEW)
-
+cmake_minimum_required(VERSION 4.00)
 project(TwitchBot VERSION 0.1.0 LANGUAGES CXX)
 
-# ─── Auto-detect vcpkg toolchain ─────────────────────────────────────────────
+# ── Don’t generate the ZERO_CHECK target (optional)
+set(CMAKE_SUPPRESS_REGENERATION ON)
+
+# ── C++20, no extensions
+set(CMAKE_CXX_STANDARD     20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS   OFF)
+
+# ── vcpkg manifest mode toolchain
 if (NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   if (DEFINED ENV{VCPKG_ROOT}
       AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
     set(CMAKE_TOOLCHAIN_FILE
         "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-        CACHE FILEPATH "vcpkg toolchain (from VCPKG_ROOT)" FORCE)
+        CACHE FILEPATH "vcpkg toolchain file" FORCE
+    )
   elseif (EXISTS "${CMAKE_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake")
     set(CMAKE_TOOLCHAIN_FILE
         "${CMAKE_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake"
-        CACHE FILEPATH "vcpkg toolchain (from submodule)" FORCE)
+        CACHE FILEPATH "vcpkg toolchain file" FORCE
+    )
   endif()
 endif()
-# ─────────────────────────────────────────────────────────────────────────────
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# ── Silence legacy FindBoost warning
+cmake_policy(SET CMP0167 NEW)
 
-# ─── Dependencies ─────────────────────────────────────────────────────────────
-find_package(Boost 1.78 REQUIRED COMPONENTS system json)
-find_package(OpenSSL REQUIRED)
+# ── Pull in your manifest-mode ports
+find_package(boost_asio    CONFIG REQUIRED)
+find_package(boost_beast   CONFIG REQUIRED)
+find_package(boost_json    CONFIG REQUIRED)
+find_package(OpenSSL       REQUIRED)
 
-# ─── Source File Organization ─────────────────────────────────────────────────
-set(TWITCHBOT_HEADERS
+# ── Source & header lists
+set(TB_SOURCES
+  src/config.cpp
+  src/faceit_client.cpp
+  src/http_client.cpp
+  src/irc_socket.cpp
+  src/twitch_bot.cpp
+  src/main.cpp
+)
+
+set(TB_HEADERS
   include/twitch_bot/config.hpp
   include/twitch_bot/faceit_client.hpp
   include/twitch_bot/http_client.hpp
@@ -37,42 +53,40 @@ set(TWITCHBOT_HEADERS
   include/utils/timer.hpp
 )
 
-set(TWITCHBOT_SOURCES
-  src/config.cpp
-  src/faceit_client.cpp
-  src/http_client.cpp
-  src/irc_socket.cpp
-  src/twitch_bot.cpp
-  src/main.cpp
-  src/twitch_bot.cpp
+# ── Single executable target
+add_executable(TwitchBot
+  ${TB_SOURCES}
+  ${TB_HEADERS}    # for IDE grouping
 )
 
-# Visual Studio grouping
-source_group("Header Files" FILES ${TWITCHBOT_HEADERS})
-source_group("Source Files" FILES ${TWITCHBOT_SOURCES})
+# ── Tell VS to launch this project on F5
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+             PROPERTY VS_STARTUP_PROJECT TwitchBot)
 
-# ─── Library Target ───────────────────────────────────────────────────────────
-add_library(TwitchBot ${TWITCHBOT_HEADERS} ${TWITCHBOT_SOURCES})
-
-target_include_directories(TwitchBot
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+# ── Include paths so that #include "config.hpp" etc. just work
+target_include_directories(TwitchBot PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/twitch_bot>
+  $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/utils>
 )
 
-target_link_libraries(TwitchBot
-  PRIVATE
-    Boost::system
-    Boost::json
-    OpenSSL::SSL
-    OpenSSL::Crypto
+if (WIN32)
+  target_compile_definitions(TwitchBot
+    PRIVATE
+      _WIN32_WINNT=0x0A00
+  )
+endif()
+
+# ── Compile settings
+target_compile_features(TwitchBot PUBLIC cxx_std_20)
+if (MSVC)
+  target_compile_options(TwitchBot PRIVATE /bigobj)
+endif()
+
+# ── Link against vcpkg-provided targets
+target_link_libraries(TwitchBot PRIVATE
+  Boost::asio
+  Boost::beast
+  Boost::json
+  OpenSSL::SSL
 )
-
-set_target_properties(TwitchBot PROPERTIES FOLDER "TwitchBot")
-
-# ─── Executable Target ────────────────────────────────────────────────────────
-add_executable(twitchbot_app src/main.cpp)
-
-target_link_libraries(twitchbot_app PRIVATE TwitchBot)
-
-set_target_properties(twitchbot_app PROPERTIES FOLDER "TwitchBot")
