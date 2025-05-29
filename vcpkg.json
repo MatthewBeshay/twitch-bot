@@ -9,6 +9,7 @@
     },
     "boost-beast",
     "boost-json",
-    "openssl"
+    "openssl",
+    "tomlplusplus"
   ]
 }

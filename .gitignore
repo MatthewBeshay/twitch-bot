@@ -63,3 +63,6 @@ external/vcpkg/downloads/
 # ---------------------------------------------------------------------
 *.log
 *.tmp
+
+# ignore the real config
+/config.toml

@@ -1,0 +1,18 @@
+# --------- FACEIT DATA API ---------
+faceit_api_key = ""
+
+# --------- TWITCH CHAT ---------
+[twitch.chat]
+# include the "oauth:" prefix
+oauth_token   = ""
+refresh_token = ""
+
+# --------- TWITCH APP ---------
+[twitch.app]
+client_id     = ""
+client_secret = ""
+
+# ----- Bot configuration (Twitch) -----
+[twitch.bot]
+# channel name for the bot to join
+channel = ""
