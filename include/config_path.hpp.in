@@ -1,0 +1,10 @@
+#pragma once
+#include <filesystem>
+
+/**  
+ * @returns the path to the TOML config file, as set by CMake.  
+ */
+inline std::filesystem::path getConfigPath() {
+    // this will literally become "/your/project/root/config.toml"
+    return std::filesystem::path{"@CONFIG_FILE_PATH@"};
+}

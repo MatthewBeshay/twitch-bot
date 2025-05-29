@@ -50,6 +50,22 @@ set(TB_HEADERS
   include/utils/timer.hpp
 )
 
+# 1) Hard-code the default to <project root>/config.toml
+set(CONFIG_FILE_PATH "${CMAKE_SOURCE_DIR}/config.toml")
+
+# 2) Emit a tiny header with that path baked in
+configure_file(
+  "${CMAKE_SOURCE_DIR}/include/config_path.hpp.in"
+  "${CMAKE_BINARY_DIR}/generated/config_path.hpp"
+  @ONLY
+)
+
+# 3) Make sure TwitchBot can #include it
+target_include_directories(TwitchBot
+  PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
+)
+
 # -- Executable target
 add_executable(TwitchBot
   ${TB_SOURCES}
