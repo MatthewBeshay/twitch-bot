@@ -3,6 +3,7 @@
 # ---------------------------------------------------------------------
 # MSVC/IDE user files and caches
 .vs/
+*.vscode/
 *.suo
 *.user
 *.userosscache
