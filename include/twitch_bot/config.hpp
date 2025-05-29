@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "config_path.hpp"
+
 #include <string>
 #include <filesystem>
 #include <stdexcept>
@@ -24,7 +26,11 @@ struct Config {
     /// Load all variables from the given TOML file.
     /// @param tomlFilePath Path to the TOML file (defaults to "config.toml").
     /// @throws EnvError on missing file, parse error, or missing key.
-    static Config load(const std::filesystem::path& tomlFilePath = "config.toml");
+    static Config load(const std::filesystem::path& tomlFilePath);
+
+    /// Auto-locate the TOML (CWD first, then CMake-baked) and load.
+    /// @throws EnvError on missing file, parse error, or missing key.
+    static Config load();
 };
 
 } // namespace env

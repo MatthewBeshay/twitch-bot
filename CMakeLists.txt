@@ -27,8 +27,8 @@ endif()
 cmake_policy(SET CMP0167 NEW)
 
 # -- Pull in manifest-mode ports
-find_package(Boost  REQUIRED COMPONENTS asio beast json)
-find_package(OpenSSL REQUIRED)
+find_package(Boost       REQUIRED COMPONENTS asio beast json)
+find_package(OpenSSL     REQUIRED)
 find_package(tomlplusplus CONFIG REQUIRED)
 
 # -- Sources & headers
@@ -60,16 +60,16 @@ configure_file(
   @ONLY
 )
 
-# 3) Make sure TwitchBot can #include it
-target_include_directories(TwitchBot
-  PRIVATE
-    "${CMAKE_BINARY_DIR}/generated"
-)
-
 # -- Executable target
 add_executable(TwitchBot
   ${TB_SOURCES}
   ${TB_HEADERS}    # for IDE grouping
+)
+
+# 3) Make sure TwitchBot can #include the generated header
+target_include_directories(TwitchBot
+  PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
 )
 
 # -- IDE startup project
@@ -79,7 +79,9 @@ set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT TwitchBot)
 target_include_directories(TwitchBot
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>        # when installed
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/twitch_bot>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/utils>
+    $<INSTALL_INTERFACE:include>
 )
 
 # -- Windows tweaks
