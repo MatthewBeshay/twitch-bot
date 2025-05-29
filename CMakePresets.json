@@ -9,5 +9,17 @@
       "toolchainFile":"${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "binaryDir":    "${sourceDir}/build"
     }
+  ],
+  "buildPresets": [
+    {
+      "name":             "vs2022-x64-debug",
+      "configurePreset":  "vs2022-x64",
+      "configuration":    "Debug"
+    },
+    {
+      "name":             "vs2022-x64-release",
+      "configurePreset":  "vs2022-x64",
+      "configuration":    "Release"
+    }
   ]
 }
