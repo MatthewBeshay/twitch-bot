@@ -1,4 +1,4 @@
-﻿// C++ Standard Library
+// C++ Standard Library
 #include <initializer_list>
 #include <string_view>
 #include <utility>
