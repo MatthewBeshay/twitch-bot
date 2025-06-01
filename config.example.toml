@@ -1,3 +1,7 @@
+# --------- FACEIT DATA API ---------
+[faceit]
+api_key = ""
+
 # --------- TWITCH CHAT ---------
 [twitch.chat]
 # include the "oauth:" prefix

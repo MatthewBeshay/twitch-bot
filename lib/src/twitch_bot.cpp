@@ -1,4 +1,4 @@
-﻿// C++ Standard Library
+// C++ Standard Library
 #include <array>
 #include <iostream>
 #include <span>
