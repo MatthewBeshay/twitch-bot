@@ -14,7 +14,8 @@ int main() {
             /* oauthToken     = */ cfg.twitchChatOauthToken_,
             /* clientId       = */ cfg.twitchAppClientId_,
             /* clientSecret   = */ cfg.twitchAppClientSecret_,
-            /* controlChannel = */ cfg.twitchBotChannel_
+            /* controlChannel = */ cfg.twitchBotChannel_,
+            /* faceitApiKey   = */ cfg.faceitApiKey_
         };
         bot.run();
     }

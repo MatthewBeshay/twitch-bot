@@ -21,6 +21,7 @@ struct Config {
     std::string twitchAppClientId_;      ///< Twitch App client ID
     std::string twitchAppClientSecret_;  ///< Twitch App client secret
     std::string twitchBotChannel_;       ///< Control channel for the bot
+    std::string faceitApiKey_;           ///< FACEIT API key
 
     /**
      * @brief Load all variables from the given TOML file.

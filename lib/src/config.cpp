@@ -1,4 +1,5 @@
 ﻿#include "config.hpp"
+#include "faceit_client.hpp"
 
 #include <filesystem>
 #include <sstream>
@@ -70,6 +71,7 @@ env::Config parseToml(const std::filesystem::path& path) {
     cfg.twitchAppClientId_      = fetch_string(tbl, path, {"twitch","app","client_id"});
     cfg.twitchAppClientSecret_  = fetch_string(tbl, path, {"twitch","app","client_secret"});
     cfg.twitchBotChannel_       = fetch_string(tbl, path, {"twitch","bot","channel"});
+    cfg.faceitApiKey_           = fetch_string(tbl, path, {"faceit","api_key"});
     return cfg;
 }
 
