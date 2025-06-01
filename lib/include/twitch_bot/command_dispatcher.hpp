@@ -46,8 +46,8 @@ public:
      * @param handler  The coroutine to invoke when that command is seen.
      */
     void registerCommand(std::string_view cmd, CommandHandler handler) {
-        // Note: we store std::string(cmd) as the key,
-        // but lookup will be done via std::string_view.
+        // Note: we store a std::string(cmd) as the key,
+        // but the map is heterogeneous so lookup from string_view is zero-overhead.
         commandMap_.emplace(std::string(cmd), std::move(handler));
     }
 
@@ -71,10 +71,8 @@ public:
 
 private:
     // Store commands in an unordered_map keyed by std::string,
-    // but allow lookup by std::string_view (any string-like type that converts).
-    //
-    // We now use TransparentStringHash and TransparentStringEq for zero-overhead
-    // heterogeneous lookup of std::string_view, const char*, std::string, etc.
+    // but allow lookup by std::string_view, const char*, etc.
+    // TransparentStringHash/TransparentStringEq enable zero-overhead heterogeneous lookup.
     std::unordered_map<
         std::string,
         CommandHandler,

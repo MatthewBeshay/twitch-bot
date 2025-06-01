@@ -51,8 +51,6 @@ TwitchBot::TwitchBot(std::string oauthToken,
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
       {
-        // Only the control channel can set an alias for a channel
-        if (std::string(channel) == controlChannel_) {
           std::string alias = std::string(args);
           channelStore_->setAlias(channel, alias);
           channelStore_->save();
@@ -60,7 +58,6 @@ TwitchBot::TwitchBot(std::string oauthToken,
             "PRIVMSG #" + std::string(channel)
             + " :Alias set to " + alias
           );
-        }
         co_return;
       });
 
@@ -69,8 +66,6 @@ TwitchBot::TwitchBot(std::string oauthToken,
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
       {
-        // Only the control channel can set a FACEIT nickname
-        if (std::string(channel) == controlChannel_) {
           std::string faceitNick = std::string(args);
           channelStore_->setFaceitNick(channel, faceitNick);
           channelStore_->save();
@@ -78,7 +73,6 @@ TwitchBot::TwitchBot(std::string oauthToken,
             "PRIVMSG #" + std::string(channel)
             + " :FACEIT nickname set to " + faceitNick
           );
-        }
         co_return;
       });
 
@@ -88,14 +82,22 @@ TwitchBot::TwitchBot(std::string oauthToken,
         -> boost::asio::awaitable<void>
       {
         if (std::string(channel) == controlChannel_) {
-          std::string newChan = std::string(args);
+          std::string newChan = std::string(user);
+
           channelStore_->addChannel(newChan);
           channelStore_->save();
+
           co_await ircClient_->sendLine("JOIN #" + newChan);
+
           co_await ircClient_->sendLine(
-            "PRIVMSG #" + controlChannel_ + " :Joined " + newChan
+            "PRIVMSG #" + controlChannel_ + " :Joined " + std::string(user)
           );
         }
+        else {
+          std::cout << "[DEBUG] !join ignored: request not from controlChannel (" 
+                    << channel << " != " << controlChannel_ << ")\n";
+        }
+
         co_return;
       });
 
@@ -105,7 +107,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
         -> boost::asio::awaitable<void>
       {
         if (std::string(channel) == controlChannel_) {
-          std::string remChan = std::string(args);
+          std::string remChan = std::string(user);
           channelStore_->removeChannel(remChan);
           channelStore_->save();
           co_await ircClient_->sendLine("PART #" + remChan);
@@ -170,11 +172,15 @@ TwitchBot::TwitchBot(std::string oauthToken,
           }
         }
 
-        // 4) Send response
+        // 4) Send response, using alias if set, otherwise the raw channel name
+        std::string displayName = channelStore_->getAlias(channel).value_or(std::string(channel));
+
         std::ostringstream oss;
         oss << "PRIVMSG #" << channel
-            << " :Level " << lvl
-            << " : " << currentElo << " Elo";
+            << " :" << displayName
+            << " is level " << lvl
+            << " | " << currentElo << " Elo";
+
         co_await ircClient_->sendLine(oss.str());
         co_return;
       });
@@ -258,15 +264,17 @@ TwitchBot::TwitchBot(std::string oauthToken,
         }
 
         // Count wins/losses
-        int wins = std::count_if(
-          statsArr.begin(),
-          statsArr.end(),
-          [](auto const& m){
-            return m.as_object()
-                    .at("stats").as_object()
-                    .at("Result").as_string() == "1";
-          }
-        );
+        int wins = static_cast<int>(
+            std::count_if(
+                statsArr.begin(),
+                statsArr.end(),
+                [](auto const& m) {
+                    return m.as_object()
+                        .at("stats").as_object()
+                        .at("Result").as_string() == "1";
+                }
+            )
+            );
         int losses = static_cast<int>(statsArr.size()) - wins;
 
         // 8) Fetch Elo history (for delta)

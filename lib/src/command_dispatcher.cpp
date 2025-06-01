@@ -21,15 +21,17 @@ boost::asio::awaitable<void> CommandDispatcher::dispatch(
         ? rawChan.substr(1)
         : rawChan;
 
-    // 3) Extract user from prefix (prefix is ":username!username@...").
+    // 3) Extract user from prefix.
+    //    parseIrcLine(...) already removed the leading ':' from msg.prefix,
+    //    so msg.prefix == "username!username@...".  We simply split at the '!' now.
     std::string_view user;
-    if (!msg.prefix.empty() && msg.prefix.front() == ':') {
-        auto excl = msg.prefix.find('!');
-        if (excl != std::string_view::npos) {
-            user = msg.prefix.substr(1, excl - 1);
-        } else {
-            user = msg.prefix.substr(1);
-        }
+    {
+      auto excl = msg.prefix.find('!');
+      if (excl != std::string_view::npos) {
+        user = msg.prefix.substr(0, excl);
+      } else {
+        user = msg.prefix; // no '!' found; treat entire prefix as user
+      }
     }
 
     // 4) Check if trailing text begins with '!' (indicating a command).

@@ -1,34 +1,25 @@
+// utils/transparent_string.hpp
 #pragma once
 
-#include <concepts>
-#include <string>
 #include <string_view>
 #include <functional>
 
-//----------------------------------------------------------------
-// TransparentStringHash with C++20 concepts
-//----------------------------------------------------------------
+/// A hash functor that can accept std::string, std::string_view, const char*, etc.
+/// All of those implicitly convert to std::string_view.
 struct TransparentStringHash {
-    using is_transparent = void;
+    using is_transparent = void; // Enables heterogeneous lookup
 
-    template<std::convertible_to<std::string_view> S>
-    std::size_t operator()(S const& s) const noexcept {
-        // We always normalize to a std::string_view, then hash.
-        return std::hash<std::string_view>{}(std::string_view(s));
+    std::size_t operator()(std::string_view sv) const noexcept {
+        return std::hash<std::string_view>{}(sv);
     }
 };
 
-//----------------------------------------------------------------
-// TransparentStringEq with C++20 concepts
-//----------------------------------------------------------------
+/// An equality functor that can accept std::string, std::string_view, const char*, etc.
+/// Again, they all convert to std::string_view.
 struct TransparentStringEq {
-    using is_transparent = void;
+    using is_transparent = void; // Enables heterogeneous lookup
 
-    template<
-        std::convertible_to<std::string_view> A,
-        std::convertible_to<std::string_view> B
-    >
-    bool operator()(A const& a, B const& b) const noexcept {
-        return std::string_view(a) == std::string_view(b);
+    bool operator()(std::string_view a, std::string_view b) const noexcept {
+        return a == b;
     }
 };
