@@ -29,7 +29,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
 {
     ssl_ctx_.set_default_verify_paths();
 
-    // (1) Load per‐channel info (alias + faceit) from disk
+    // (1) Load per-channel info (alias + faceit) from disk
     channelStore_ = std::make_unique<ChannelStore>();
     channelStore_->load();
 
@@ -43,10 +43,10 @@ TwitchBot::TwitchBot(std::string oauthToken,
     dispatcher_ = std::make_unique<CommandDispatcher>();
 
     //
-    // Register built‐in commands
+    // Register built-in commands
     //
 
-    // — setnickname <alias>
+    // -- setnickname <alias>
     dispatcher_->registerCommand("!setnickname",
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
@@ -61,7 +61,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
         co_return;
       });
 
-    // — setfaceit <faceitNick>
+    // -- setfaceit <faceitNick>
     dispatcher_->registerCommand("!setfaceit",
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
@@ -76,7 +76,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
         co_return;
       });
 
-    // — join <newChannel>
+    // -- join <newChannel>
     dispatcher_->registerCommand("!join",
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
@@ -101,7 +101,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
         co_return;
       });
 
-    // — leave <removeChannel>
+    // -- leave <removeChannel>
     dispatcher_->registerCommand("!leave",
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
@@ -118,7 +118,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
         co_return;
       });
 
-    // — rank
+    // -- rank
     dispatcher_->registerCommand("!rank",
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
@@ -185,7 +185,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
         co_return;
       });
 
-    // — record [limit]
+    // -- record [limit]
     dispatcher_->registerCommand("!record",
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
@@ -211,7 +211,7 @@ TwitchBot::TwitchBot(std::string oauthToken,
         }
         const std::string faceitNick = *optFaceit;
 
-        // 3) Parse optional “limit” (default = 100)
+        // 3) Parse optional 'limit' (default = 100)
         int limit = 100;
         if (!args.empty()) {
           try {
@@ -344,7 +344,7 @@ void TwitchBot::addChatListener(ChatListener cb) {
 }
 
 void TwitchBot::run() {
-    // (1) Launch the top‐level coroutine:
+    // (1) Launch the top-level coroutine:
     boost::asio::co_spawn(
       ioc_,
       [this]() -> boost::asio::awaitable<void> {

@@ -8,7 +8,7 @@
 
 namespace {
 
-/// Join ["twitch","chat","oauth_token"] → "twitch.chat.oauth_token"
+/// Join ["twitch","chat","oauth_token"] -> "twitch.chat.oauth_token"
 std::string join_keys(std::initializer_list<std::string_view> keys) noexcept {
     std::string out;
     out.reserve(64);
@@ -21,7 +21,7 @@ std::string join_keys(std::initializer_list<std::string_view> keys) noexcept {
     return out;
 }
 
-/// Fetch a string at a dotted‐path in the TOML table or throw EnvError.
+/// Fetch a string at a dotted-path in the TOML table or throw EnvError.
 std::string fetch_string(const toml::table& tbl,
                          const std::filesystem::path& path,
                          std::initializer_list<std::string_view> keys)
@@ -75,7 +75,7 @@ env::Config parseToml(const std::filesystem::path& path) {
     return cfg;
 }
 
-/// Locate “config.toml”-check CWD first, then fallback to CMake‐baked path.
+/// Locate "config.toml"-check CWD first, then fallback to CMake-baked path.
 std::filesystem::path findConfigFile() noexcept {
     auto cwd       = std::filesystem::current_path();
     auto candidate = cwd / "config.toml";

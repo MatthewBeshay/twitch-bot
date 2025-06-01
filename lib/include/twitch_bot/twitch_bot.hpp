@@ -19,7 +19,7 @@
 namespace twitch_bot {
 
 /**
- * @brief The “glue” class that ties together:
+ * @brief The "glue" class that ties together:
  *   - IrcClient        (network + IRC framing)
  *   - CommandDispatcher (dispatch commands + chat callbacks)
  *   - HelixClient      (OAuth + Helix calls)
@@ -30,14 +30,14 @@ namespace twitch_bot {
  *   - TwitchBot(oauthToken, clientId, clientSecret, controlChannel, faceitApiKey)
  *   - ~TwitchBot()
  *   - void run()                     // blocks until termination
- *   - void addChatListener(cb)       // register “on chat” callbacks
+ *   - void addChatListener(cb)       // register "on chat" callbacks
  */
 class TwitchBot {
 public:
     /**
      * @brief Construct a TwitchBot.
      *
-     * @param oauthToken       Raw OAuth token for Twitch chat (no leading “oauth:”).
+     * @param oauthToken       Raw OAuth token for Twitch chat (no leading "oauth:").
      * @param clientId         Twitch App client ID (Helix).
      * @param clientSecret     Twitch App client secret (Helix).
      * @param controlChannel   Channel where bot listens for control commands.
@@ -72,7 +72,7 @@ private:
     /// The main coroutine: connects, spawns ping/read loops, then idles forever.
     boost::asio::awaitable<void> runBot();
 
-    // ——— Underlying components ———
+    // --- Underlying components ---
     boost::asio::io_context             ioc_;
     boost::asio::ssl::context           ssl_ctx_;
 
