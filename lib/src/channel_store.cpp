@@ -37,22 +37,22 @@ void ChannelStore::load() {
         return;
     }
 
-    // Reserve space in our unordered_map before inserting
-    channelNicks_.clear();
-    channelNicks_.reserve(tbl.size());
+    // Replace current map with on-disk contents
+    channelAliases_.clear();
+    channelAliases_.reserve(tbl.size());
 
     for (auto const& [key, val] : tbl) {
         if (auto const* channelTable = val.as_table()) {
-            if (auto optNickNode = channelTable->get("nick");
-                optNickNode && optNickNode->is_string())
+            if (auto optAliasNode = channelTable->get("alias");
+                optAliasNode && optAliasNode->is_string())
             {
-                channelNicks_.emplace(
+                channelAliases_.emplace(
                     key,
-                    optNickNode->value<std::string>()
+                    optAliasNode->value<std::string>()
                 );
             }
             else {
-                channelNicks_.emplace(key, std::nullopt);
+                channelAliases_.emplace(key, std::nullopt);
             }
         }
         else {
@@ -64,10 +64,10 @@ void ChannelStore::load() {
 void ChannelStore::save() const {
     toml::table tbl;
 
-    for (auto const& [channel, optNick] : channelNicks_) {
+    for (auto const& [channel, optAlias] : channelAliases_) {
         toml::table channelTbl;
-        if (optNick) {
-            channelTbl.insert("nick", *optNick);
+        if (optAlias) {
+            channelTbl.insert("alias", *optAlias);
         }
         tbl.insert(channel, std::move(channelTbl));
     }
@@ -77,7 +77,7 @@ void ChannelStore::save() const {
     oss << tbl;
     const std::string serialized = oss.str();
 
-    // Build a temporary filename (string) for atomic overwrite
+    // Build a temporary filename for atomic overwrite
     const std::string tmpName = filename_.string() + ".tmp";
     {
         std::ofstream out(tmpName, std::ios::trunc);
@@ -105,36 +105,36 @@ void ChannelStore::save() const {
 }
 
 void ChannelStore::addChannel(std::string_view channel) {
-    channelNicks_.try_emplace(std::string{channel}, std::nullopt);
+    channelAliases_.try_emplace(std::string{channel}, std::nullopt);
 }
 
 void ChannelStore::removeChannel(std::string_view channel) {
-    channelNicks_.erase(std::string{channel});
+    channelAliases_.erase(std::string{channel});
 }
 
 std::vector<ChannelName> ChannelStore::allChannels() const {
     std::vector<ChannelName> result;
-    result.reserve(channelNicks_.size());
-    for (auto const& [chan, _] : channelNicks_) {
+    result.reserve(channelAliases_.size());
+    for (auto const& [chan, _] : channelAliases_) {
         result.push_back(chan);
     }
     return result;
 }
 
-std::optional<NickName> ChannelStore::getNick(std::string_view channel) const {
-    auto it = channelNicks_.find(std::string{channel});
-    if (it == channelNicks_.end()) {
+std::optional<Alias> ChannelStore::getAlias(std::string_view channel) const {
+    auto it = channelAliases_.find(std::string{channel});
+    if (it == channelAliases_.end()) {
         return std::nullopt;
     }
     return it->second;
 }
 
-void ChannelStore::setNick(std::string_view channel, std::optional<NickName> nick) {
-    auto it = channelNicks_.find(std::string{channel});
-    if (it == channelNicks_.end()) {
+void ChannelStore::setAlias(std::string_view channel, std::optional<Alias> alias) {
+    auto it = channelAliases_.find(std::string{channel});
+    if (it == channelAliases_.end()) {
         return;
     }
-    it->second = std::move(nick);
+    it->second = std::move(alias);
 }
 
 } // namespace twitch_bot
