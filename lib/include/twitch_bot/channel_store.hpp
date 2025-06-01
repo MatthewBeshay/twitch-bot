@@ -1,27 +1,36 @@
 #pragma once
 
+#include "utils/transparent_string.hpp"
+
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_map>
 #include <optional>
 #include <filesystem>
 
+#include <toml++/toml.hpp>
+
 namespace twitch_bot {
 
 using ChannelName = std::string;
-using Alias       = std::string;
+
+/// Holds per-channel metadata: only an optional alias remains.
+struct ChannelInfo {
+    std::optional<std::string> alias;
+};
 
 /**
- * @brief A simple in-process "database" of which channels we're in, and
- *        optionally what the "alias" is for that channel.
+ * @brief A simple in-process “database” of which channels we’re in, plus one
+ *        optional string per channel: alias (set via !setnickname).
  *
- * Internally stored in a TOML file (default: "channels.toml"):
+ * Internally stored in a TOML file (default: “channels.toml”):
  *
  *   [somechannel]
  *   alias = "someAlias"
  *
  *   [otherchannel]
- *   # no "alias" key -> interpreted as std::nullopt
+ *   # no "alias" key → std::nullopt
  */
 class ChannelStore {
 public:
@@ -39,16 +48,19 @@ public:
     ChannelStore& operator=(ChannelStore&&) noexcept = default;
 
     /**
-     * @brief Read `filename_` (if it exists) and parse via Toml++, populating `channelAliases_`.
-     * @post  On success, `channelAliases_` is replaced with the on-disk contents.
-     * @post  On parse error or I/O failure, `channelAliases_` is left unchanged and an error is logged.
+     * @brief Read `filename_` (if it exists) and parse via toml++,
+     *        populating `channelData_`.
+     * @post  On success, `channelData_` is replaced with the on-disk contents.
+     * @post  On parse error or I/O failure, `channelData_` is left unchanged
+     *        and an error is logged.
      */
     void load();
 
     /**
-     * @brief Write the current state of `channelAliases_` out to `filename_`
+     * @brief Write the current state of `channelData_` out to `filename_`
      *        as a TOML table (atomically, by writing to a ".tmp" then renaming).
-     * @post  On success, the file at `filename_` matches `channelAliases_`. On failure, logs an error.
+     * @post  On success, the file at `filename_` matches `channelData_`.
+     *        On failure, logs an error.
      */
     void save() const;
 
@@ -71,23 +83,32 @@ public:
     std::vector<ChannelName> allChannels() const;
 
     /**
-     * @brief Optionally get the stored "alias" for a given channel.
+     * @brief Optionally get the stored “alias” for a given channel.
      * @param channel  Name of the channel to query.
-     * @return `std::nullopt` if the channel is not present or has no alias, otherwise the alias string.
+     * @return `std::nullopt` if the channel is not present or has no alias,
+     *         otherwise the alias string.
      */
-    std::optional<Alias> getAlias(std::string_view channel) const;
+    std::optional<std::string> getAlias(std::string_view channel) const;
 
     /**
-     * @brief Set (or clear) the stored "alias" for a given channel.
+     * @brief Set (or clear) the stored “alias” for a given channel.
      * @param channel  Name of the channel to modify.
      * @param alias    If non-nullopt, sets the alias; if `std::nullopt`, clears it.
      * @post  If the channel is not already present, does nothing.
      */
-    void setAlias(std::string_view channel, std::optional<Alias> alias);
+    void setAlias(std::string_view channel, std::optional<std::string> alias);
 
 private:
-    std::filesystem::path                                      filename_;
-    std::unordered_map<ChannelName, std::optional<Alias>>     channelAliases_;
+    std::filesystem::path filename_;
+
+    // heterogeneous-lookup map: key = channel name, value = ChannelInfo
+    // Using TransparentStringHash / TransparentStringEq for zero-overhead lookups.
+    std::unordered_map<
+        std::string,
+        ChannelInfo,
+        TransparentStringHash,
+        TransparentStringEq
+    > channelData_;
 };
 
 } // namespace twitch_bot

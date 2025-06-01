@@ -1,6 +1,7 @@
 #pragma once
 
 #include "message_parser.hpp"
+#include "utils/transparent_string.hpp"
 
 #include <functional>
 #include <string>
@@ -22,22 +23,6 @@ using CommandHandler = std::function<
     boost::asio::awaitable<void>(std::string_view channel,
                                   std::string_view user,
                                   std::string_view args)>;
-
-/// Hash functor for string_view that is transparent (for heterogeneous lookup).
-struct StringViewHash {
-    using is_transparent = void;
-    std::size_t operator()(std::string_view v) const noexcept {
-        return std::hash<std::string_view>{}(v);
-    }
-};
-
-/// Equality functor for string_view that is transparent (for heterogeneous lookup).
-struct StringViewEq {
-    using is_transparent = void;
-    bool operator()(std::string_view a, std::string_view b) const noexcept {
-        return a == b;
-    }
-};
 
 /**
  * @brief CommandDispatcher inspects each IrcMessage. If it's a PRIVMSG and the
@@ -61,6 +46,8 @@ public:
      * @param handler  The coroutine to invoke when that command is seen.
      */
     void registerCommand(std::string_view cmd, CommandHandler handler) {
+        // Note: we store std::string(cmd) as the key,
+        // but lookup will be done via std::string_view.
         commandMap_.emplace(std::string(cmd), std::move(handler));
     }
 
@@ -83,12 +70,16 @@ public:
     boost::asio::awaitable<void> dispatch(IrcMessage const& msg);
 
 private:
-    // Store commands in an unordered_map keyed by std::string, but allow lookup by std::string_view.
+    // Store commands in an unordered_map keyed by std::string,
+    // but allow lookup by std::string_view (any string-like type that converts).
+    //
+    // We now use TransparentStringHash and TransparentStringEq for zero-overhead
+    // heterogeneous lookup of std::string_view, const char*, std::string, etc.
     std::unordered_map<
         std::string,
         CommandHandler,
-        StringViewHash,
-        StringViewEq
+        TransparentStringHash,
+        TransparentStringEq
     > commandMap_;
 
     // List of callbacks for plain chat messages (or fallback if no command matches).
