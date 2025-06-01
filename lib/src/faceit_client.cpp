@@ -186,6 +186,12 @@ Client::sendRequest(std::string_view host,
             host, api_port, std::move(target),
             hdrs, ioContext_, sslContext_);
     }
+    catch (const boost::system::system_error& e) {
+        std::cerr
+            << "[FACEIT][" << host << target << "] "
+            << "Network error: " << e.code().message() << "\n";
+        throw;
+    }
     catch (const std::runtime_error& e) {
         // Extract HTTP status code if present
         std::string what = e.what();
@@ -197,12 +203,6 @@ Client::sendRequest(std::string_view host,
             << "[FACEIT][" << host << target << "] "
             << "HTTP " << code << " - " << reasonFor(code)
             << "\n    underlying: " << what << "\n";
-        throw;
-    }
-    catch (const boost::system::system_error& e) {
-        std::cerr
-            << "[FACEIT][" << host << target << "] "
-            << "Network error: " << e.code().message() << "\n";
         throw;
     }
 }
