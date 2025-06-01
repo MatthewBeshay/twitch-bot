@@ -10,12 +10,11 @@ int main() {
 
     try {
         auto cfg = env::Config::load();
-        TwitchBot bot{
+        twitch_bot::TwitchBot bot{
             /* oauthToken     = */ cfg.twitchChatOauthToken_,
             /* clientId       = */ cfg.twitchAppClientId_,
             /* clientSecret   = */ cfg.twitchAppClientSecret_,
-            /* controlChannel = */ cfg.twitchBotChannel_,
-            /* faceitApiKey   = */ cfg.faceitApiKey_
+            /* controlChannel = */ cfg.twitchBotChannel_
         };
         bot.run();
     }

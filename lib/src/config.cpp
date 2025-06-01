@@ -1,24 +1,26 @@
 ﻿#include "config.hpp"
 
-#include <toml++/toml.hpp>
 #include <filesystem>
 #include <sstream>
+
+#include <toml++/toml.hpp>
 
 namespace {
 
 /// Join ["twitch","chat","oauth_token"] → "twitch.chat.oauth_token"
-std::string join_keys(std::initializer_list<std::string_view> keys) {
+std::string join_keys(std::initializer_list<std::string_view> keys) noexcept {
     std::string out;
+    out.reserve(64);
     bool first = true;
     for (auto k : keys) {
-        if (!first) out += '.';
-        out += k;
+        if (!first) out.push_back('.');
+        out.append(k);
         first = false;
     }
     return out;
 }
 
-/// Fetch a string value at dotted-path or throw EnvError.
+/// Fetch a string at a dotted‐path in the TOML table or throw EnvError.
 std::string fetch_string(const toml::table& tbl,
                          const std::filesystem::path& path,
                          std::initializer_list<std::string_view> keys)
@@ -33,7 +35,8 @@ std::string fetch_string(const toml::table& tbl,
     };
 }
 
-/// Parse the TOML file at @p path and populate a Config. Throws EnvError.
+/// Parse the TOML file at @p path and return a populated Config.
+/// @throws EnvError on parse failure or missing keys.
 env::Config parseToml(const std::filesystem::path& path) {
     toml::table tbl;
 
@@ -62,7 +65,6 @@ env::Config parseToml(const std::filesystem::path& path) {
 #endif
 
     env::Config cfg;
-    cfg.faceitApiKey_           = fetch_string(tbl, path, {"faceit_api_key"});
     cfg.twitchChatOauthToken_   = fetch_string(tbl, path, {"twitch","chat","oauth_token"});
     cfg.twitchChatRefreshToken_ = fetch_string(tbl, path, {"twitch","chat","refresh_token"});
     cfg.twitchAppClientId_      = fetch_string(tbl, path, {"twitch","app","client_id"});
@@ -71,14 +73,14 @@ env::Config parseToml(const std::filesystem::path& path) {
     return cfg;
 }
 
-/// Decide where to look for config.toml: CWD first, then fallback.
+/// Locate “config.toml”-check CWD first, then fallback to CMake‐baked path.
 std::filesystem::path findConfigFile() noexcept {
-    auto cwd = std::filesystem::current_path();
+    auto cwd       = std::filesystem::current_path();
     auto candidate = cwd / "config.toml";
     if (std::filesystem::exists(candidate)) {
         return candidate;
     }
-    return getConfigPath();  // CMake-baked default
+    return getConfigPath();  // from config_path.hpp
 }
 
 } // anonymous namespace
@@ -87,7 +89,9 @@ namespace env {
 
 Config Config::load(const std::filesystem::path& tomlFilePath) {
     if (!std::filesystem::exists(tomlFilePath)) {
-        throw EnvError{"Config file not found: " + tomlFilePath.string() + " or in the same folder as the EXE."};
+        throw EnvError{
+            "Config file not found: " + tomlFilePath.string()
+        };
     }
     return parseToml(tomlFilePath);
 }

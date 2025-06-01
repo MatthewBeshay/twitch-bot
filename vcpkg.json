@@ -3,10 +3,7 @@
   "name": "twitch-bot",
   "version-string": "0.1.0",
   "dependencies": [
-    {
-      "name": "boost-asio",
-      "features": ["ssl"]
-    },
+    { "name": "boost-asio",  "features": [ "ssl" ] },
     "boost-beast",
     "boost-json",
     "openssl",

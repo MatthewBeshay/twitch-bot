@@ -1,16 +1,14 @@
 # ---------------------------------------------------------------------
 # Visual Studio
 # ---------------------------------------------------------------------
-# MSVC/IDE user files and caches
+# MSVC and IDE user files and caches
 .vs/
-*.vscode/
+.vscode/
 *.suo
 *.user
 *.userosscache
-*.vcxproj
 *.vcxproj.user
 *.vcxproj.filters
-*.sln
 *.vc.db
 *.opensdf
 *.sdf
@@ -36,28 +34,22 @@ cmake_install.cmake
 install_manifest.txt
 Makefile
 
-# out-of-source build folders
+# Out-of-source build folders
 /build/
 /*/build/
 
-# per-user presets
+# Per-user CMake presets
 CMakeUserPresets.json
 
 # ---------------------------------------------------------------------
 # vcpkg
 # ---------------------------------------------------------------------
-# root-level installs
+# Root-level installs
 /vcpkg_installed/
 
-# if you vendored vcpkg under external/vcpkg or top-level vcpkg/
-external/vcpkg/buildtrees/
-external/vcpkg/installed/
-external/vcpkg/packages/
-external/vcpkg/downloads/
-/vcpkg/buildtrees/
-/vcpkg/installed/
-/vcpkg/packages/
-/vcpkg/downloads/
+# Externals (third-party libs via git submodules)
+# Ignore everything in external/
+ /external/
 
 # ---------------------------------------------------------------------
 # General
@@ -65,5 +57,17 @@ external/vcpkg/downloads/
 *.log
 *.tmp
 
-# ignore the real config
+# macOS Finder files
+.DS_Store
+
+# Windows thumbnail cache and system files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor backups and swap files
+*~
+*.swp
+
+# Ignore the real config file
 /config.toml
