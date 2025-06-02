@@ -2,7 +2,6 @@
 
 #include <iostream>
 
-#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>

@@ -7,14 +7,12 @@
 #include "faceit_client.hpp"
 
 #include <string>
-#include <vector>
 #include <functional>
 #include <memory>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/steady_timer.hpp>
 
 namespace twitch_bot {
 

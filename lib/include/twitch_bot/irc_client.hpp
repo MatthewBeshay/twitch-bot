@@ -3,15 +3,13 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <array>
 #include <functional>
-#include <memory>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/beast/core.hpp>
+
 #include <boost/beast/websocket.hpp>
 #include <boost/beast/websocket/ssl.hpp>
 
