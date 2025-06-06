@@ -23,13 +23,16 @@ boost::asio::awaitable<void> CommandDispatcher::dispatch(
 
     // 3) Extract user from prefix (prefix is ":username!username@...").
     std::string_view user;
-    if (!msg.prefix.empty() && msg.prefix.front() == ':') {
-        auto excl = msg.prefix.find('!');
-        if (excl != std::string_view::npos) {
-            user = msg.prefix.substr(1, excl - 1);
-        } else {
-            user = msg.prefix.substr(1);
+    if (!msg.prefix.empty()) {
+        std::string_view prefix = msg.prefix;
+        if (prefix.front() == ':') {
+            prefix.remove_prefix(1);
         }
+
+        const auto excl = prefix.find('!');
+        user = (excl != std::string_view::npos)
+            ? prefix.substr(0, excl)
+            : prefix;
     }
 
     // 4) Check if trailing text begins with '!' (indicating a command).
