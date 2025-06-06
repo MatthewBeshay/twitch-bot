@@ -15,56 +15,75 @@ TwitchBot::TwitchBot(std::string oauthToken,
                      std::string clientId,
                      std::string clientSecret,
                      std::string controlChannel)
-  : ioc_()
-  , ssl_ctx_(boost::asio::ssl::context::tlsv12_client)
-  , oauthToken_(std::move(oauthToken))
-  , clientId_(std::move(clientId))
-  , clientSecret_(std::move(clientSecret))
-  , controlChannel_(std::move(controlChannel))
+    : ioc_()
+    , ssl_ctx_(boost::asio::ssl::context::tlsv12_client)
+    , oauthToken_(std::move(oauthToken))
+    , clientId_(std::move(clientId))
+    , clientSecret_(std::move(clientSecret))
+    , controlChannel_(std::move(controlChannel))
 {
     ssl_ctx_.set_default_verify_paths();
 
-    // (1) Load persisted channels from disk
+    // Load persisted channels from disk
     channelStore_ = std::make_unique<ChannelStore>();
     channelStore_->load();
 
-    // (2) Create HelixClient with same I/O and SSL contexts
-    helixClient_ = std::make_unique<HelixClient>(ioc_, ssl_ctx_, clientId_, clientSecret_);
+    // Create HelixClient with same I/O and SSL contexts
+    helixClient_ = std::make_unique<HelixClient>(
+        ioc_, ssl_ctx_, clientId_, clientSecret_);
 
-    // (3) Create CommandDispatcher
+    // Create CommandDispatcher
     dispatcher_ = std::make_unique<CommandDispatcher>();
-
-    // (4) Register built-in commands:
 
     // "!join <channel>" (only allowed in controlChannel_)
     dispatcher_->registerCommand("!join",
-        [this](auto channel, auto user, auto args) -> boost::asio::awaitable<void> {
-            if (channel == controlChannel_) {
-                std::string newChan = std::string(args);
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args) -> boost::asio::awaitable<void>
+        {
+            if (std::string(channel) == controlChannel_) {
+                // If args is non-empty, use that as the channel to join;
+                // otherwise fall back to the invoking user's own channel.
+                std::string newChan = !args.empty()
+                    ? std::string(args)
+                    : std::string(user);
+
                 channelStore_->addChannel(newChan);
                 channelStore_->save();
+
                 co_await ircClient_->sendLine("JOIN #" + newChan);
                 co_await ircClient_->sendLine(
-                    "PRIVMSG #" + controlChannel_ + " :Joined " + newChan);
+                    "PRIVMSG #" + controlChannel_ + " :Joined " + newChan
+                );
             }
             co_return;
         });
 
     // "!leave <channel>" (only allowed in controlChannel_)
     dispatcher_->registerCommand("!leave",
-        [this](auto channel, auto user, auto args) -> boost::asio::awaitable<void> {
-            if (channel == controlChannel_) {
-                std::string remChan = std::string(args);
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args) -> boost::asio::awaitable<void>
+        {
+            if (std::string(channel) == controlChannel_) {
+                // If args is non-empty, use that as the channel to part;
+                // otherwise fall back to the invoking user's own channel.
+                std::string remChan = !args.empty()
+                    ? std::string(args)
+                    : std::string(user);
+
                 channelStore_->removeChannel(remChan);
                 channelStore_->save();
+
                 co_await ircClient_->sendLine("PART #" + remChan);
                 co_await ircClient_->sendLine(
-                    "PRIVMSG #" + controlChannel_ + " :Left " + remChan);
+                    "PRIVMSG #" + controlChannel_ + " :Left " + remChan
+                );
             }
             co_return;
         });
 
-    // (5) Create IrcClient (using same I/O and SSL contexts)
+    // Create IrcClient using same I/O and SSL contexts
     ircClient_ = std::make_unique<IrcClient>(
         ioc_, ssl_ctx_, oauthToken_, controlChannel_);
 }
