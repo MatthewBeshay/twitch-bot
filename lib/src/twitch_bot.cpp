@@ -119,73 +119,78 @@ TwitchBot::TwitchBot(std::string oauthToken,
       });
 
     // -- rank
-    dispatcher_->registerCommand("!rank",
-      [this](std::string_view channel, std::string_view user, std::string_view args)
-        -> boost::asio::awaitable<void>
-      {
-        // 1) Retrieve stored FACEIT nick for this channel
-        auto optFaceit = channelStore_->getFaceitNick(channel);
-        if (!optFaceit) {
-          co_await ircClient_->sendLine(
-            "PRIVMSG #" + std::string(channel)
-            + " :No FACEIT nickname set. Use !setfaceit first."
-          );
-          co_return;
-        }
-        const std::string faceitNick = *optFaceit;
+    auto rankHandler = [this](std::string_view channel,
+        std::string_view user,
+        std::string_view args) -> boost::asio::awaitable<void>
+        {
+            // 1) Retrieve stored FACEIT nick for this channel
+            auto optFaceit = channelStore_->getFaceitNick(channel);
+            if (!optFaceit) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + std::string(channel)
+                    + " :No FACEIT nickname set. Use !setfaceit first."
+                );
+                co_return;
+            }
+            const std::string faceitNick = *optFaceit;
 
-        // 2) Query FACEIT for that nick (catch exceptions without co_await inside catch)
-        bool fetchOk = true;
-        boost::json::value playerVal;
-        try {
-          playerVal = co_await faceitClient_->getPlayerByNickname(faceitNick, "cs2");
-        }
-        catch (...) {
-          fetchOk = false;
-        }
-        if (!fetchOk) {
-          co_await ircClient_->sendLine(
-            "PRIVMSG #" + std::string(channel)
-            + " :Failed to fetch FACEIT rank"
-          );
-          co_return;
-        }
+            // 2) Query FACEIT for that nick (catch exceptions without co_await inside catch)
+            bool fetchOk = true;
+            boost::json::value playerVal;
+            try {
+                playerVal = co_await faceitClient_->getPlayerByNickname(faceitNick, "cs2");
+            }
+            catch (...) {
+                fetchOk = false;
+            }
+            if (!fetchOk) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + std::string(channel)
+                    + " :Failed to fetch FACEIT rank"
+                );
+                co_return;
+            }
 
-        // 3) Extract Elo and compute level
-        auto& playerObj = playerVal.as_object();
-        int currentElo = playerObj
-          .at("games").as_object()
-          .at("cs2").as_object()
-          .at("faceit_elo").to_number<int>();
+            // 3) Extract Elo and compute level
+            auto& playerObj = playerVal.as_object();
+            int currentElo = playerObj
+                .at("games").as_object()
+                .at("cs2").as_object()
+                .at("faceit_elo").to_number<int>();
 
-        struct LevelInfo { int level, minElo, maxElo; };
-        static constexpr LevelInfo levels[] = {
-          {10,2001,INT_MAX},{9,1751,2000},{8,1531,1750},
-          {7,1351,1530},{6,1201,1350},{5,1051,1200},
-          {4, 901,1050},{3, 751, 900},{2, 501, 750},{1, 100, 500}
+            struct LevelInfo { int level, minElo, maxElo; };
+            static constexpr LevelInfo levels[] = {
+                {10,2001,INT_MAX},{9,1751,2000},{8,1531,1750},
+                {7,1351,1530},{6,1201,1350},{5,1051,1200},
+                {4, 901,1050},{3, 751, 900},{2, 501, 750},{1, 100, 500}
+            };
+            int lvl = 1;
+            for (auto const& info : levels) {
+                if (currentElo >= info.minElo && currentElo <= info.maxElo) {
+                    lvl = info.level;
+                    break;
+                }
+            }
+
+            // 4) Send response, using alias if set, otherwise the raw channel name
+            std::string displayName = channelStore_->getAlias(channel)
+                .value_or(std::string(channel));
+
+            std::ostringstream oss;
+            oss << "PRIVMSG #" << channel
+                << " :" << displayName
+                << " is level " << lvl
+                << " | " << currentElo << " Elo";
+
+            co_await ircClient_->sendLine(oss.str());
+            co_return;
         };
-        int lvl = 1;
-        for (auto const& info : levels) {
-          if (currentElo >= info.minElo && currentElo <= info.maxElo) {
-            lvl = info.level;
-            break;
-          }
-        }
 
-        // 4) Send response, using alias if set, otherwise the raw channel name
-        std::string displayName = channelStore_->getAlias(channel).value_or(std::string(channel));
+    // register it under both “!rank” and “!elo”
+    dispatcher_->registerCommand("!rank", rankHandler);
+    dispatcher_->registerCommand("!elo", rankHandler);
 
-        std::ostringstream oss;
-        oss << "PRIVMSG #" << channel
-            << " :" << displayName
-            << " is level " << lvl
-            << " | " << currentElo << " Elo";
-
-        co_await ircClient_->sendLine(oss.str());
-        co_return;
-      });
-
-    // -- record [limit]
+     //-- record [limit]
     dispatcher_->registerCommand("!record",
       [this](std::string_view channel, std::string_view user, std::string_view args)
         -> boost::asio::awaitable<void>
