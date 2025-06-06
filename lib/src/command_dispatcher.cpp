@@ -2,7 +2,6 @@
 
 #include <iostream>
 
-#include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
 namespace twitch_bot {
@@ -10,18 +9,18 @@ namespace twitch_bot {
 boost::asio::awaitable<void> CommandDispatcher::dispatch(
     IrcMessage const& msg)
 {
-    // 1) Only proceed if this is a PRIVMSG with at least one param (the channel).
+    // Only proceed if this is a PRIVMSG with at least one parameter.
     if (msg.command != "PRIVMSG" || msg.params.empty()) {
         co_return;
     }
 
-    // 2) Extract channel name (strip leading '#', if present).
-    std::string_view rawChan = msg.params[0];
-    std::string_view channel = (rawChan.size() > 0 && rawChan.front() == '#')
-        ? rawChan.substr(1)
-        : rawChan;
+    // Extract channel name (strip leading '#' if present).
+    std::string_view raw_chan = msg.params[0];
+    std::string_view channel = (!raw_chan.empty() && raw_chan.front() == '#')
+        ? raw_chan.substr(1)
+        : raw_chan;
 
-    // 3) Extract user from prefix (prefix is ":username!username@...").
+    // Extract user from prefix (format: ":username!username@host").
     std::string_view user;
     if (!msg.prefix.empty()) {
         std::string_view prefix = msg.prefix;
@@ -29,42 +28,40 @@ boost::asio::awaitable<void> CommandDispatcher::dispatch(
             prefix.remove_prefix(1);
         }
 
-        const auto excl = prefix.find('!');
-        user = (excl != std::string_view::npos)
-            ? prefix.substr(0, excl)
+        auto excl_pos = prefix.find('!');
+        user = (excl_pos != std::string_view::npos)
+            ? prefix.substr(0, excl_pos)
             : prefix;
     }
 
-    // 4) Check if trailing text begins with '!' (indicating a command).
+    // Check if the message starts with '!' (command).
     std::string_view text = msg.trailing;
     if (!text.empty() && text.front() == '!') {
-        // Split into command token and the rest as args.
-        auto space = text.find(' ');
-        std::string_view cmd = (space == std::string_view::npos)
+        auto space_pos = text.find(' ');
+        std::string_view cmd = (space_pos == std::string_view::npos)
             ? text
-            : text.substr(0, space);
-        std::string_view args = (space == std::string_view::npos)
+            : text.substr(0, space_pos);
+        std::string_view args = (space_pos == std::string_view::npos)
             ? std::string_view{}
-            : text.substr(space + 1);
+            : text.substr(space_pos + 1);
 
-        // 5) Heterogeneous lookup: no temporary std::string construction.
+        // Heterogeneous lookup: find handler without string allocation.
         auto it = commandMap_.find(cmd);
         if (it != commandMap_.end()) {
             try {
                 co_await it->second(channel, user, args);
-            }
-            catch (const std::exception& e) {
+            } catch (const std::exception& e) {
                 std::cerr << "[CommandDispatcher] Handler for '"
                           << cmd << "' threw exception: " << e.what() << "\n";
             }
             co_return;
         }
-        // If command not found, fall through to chat listeners.
+        // If no matching command, fall through to chat listeners.
     }
 
-    // 6) Notify all registered ChatListener callbacks.
-    for (auto& cb : chatListeners_) {
-        cb(channel, user, text);
+    // Invoke all registered chat listeners.
+    for (auto& callback : chatListeners_) {
+        callback(channel, user, text);
     }
 
     co_return;

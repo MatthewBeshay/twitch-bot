@@ -65,11 +65,11 @@ env::Config parseToml(const std::filesystem::path& path) {
 #endif
 
     env::Config cfg;
-    cfg.twitchChatOauthToken_   = fetch_string(tbl, path, {"twitch","chat","oauth_token"});
-    cfg.twitchChatRefreshToken_ = fetch_string(tbl, path, {"twitch","chat","refresh_token"});
-    cfg.twitchAppClientId_      = fetch_string(tbl, path, {"twitch","app","client_id"});
-    cfg.twitchAppClientSecret_  = fetch_string(tbl, path, {"twitch","app","client_secret"});
-    cfg.twitchBotChannel_       = fetch_string(tbl, path, {"twitch","bot","channel"});
+    cfg.twitchChatOauthToken   = fetch_string(tbl, path, {"twitch","chat","oauth_token"});
+    cfg.twitchChatRefreshToken = fetch_string(tbl, path, {"twitch","chat","refresh_token"});
+    cfg.twitchAppClientId      = fetch_string(tbl, path, {"twitch","app","client_id"});
+    cfg.twitchAppClientSecret  = fetch_string(tbl, path, {"twitch","app","client_secret"});
+    cfg.twitchBotChannel       = fetch_string(tbl, path, {"twitch","bot","channel"});
     return cfg;
 }
 
