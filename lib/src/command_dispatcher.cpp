@@ -28,7 +28,7 @@ boost::asio::awaitable<void> CommandDispatcher::dispatch(
             prefix.remove_prefix(1);
         }
 
-        auto excl_pos = prefix.find('!');
+        const auto excl_pos = prefix.find('!');
         user = (excl_pos != std::string_view::npos)
             ? prefix.substr(0, excl_pos)
             : prefix;
@@ -49,7 +49,7 @@ boost::asio::awaitable<void> CommandDispatcher::dispatch(
         auto it = commandMap_.find(cmd);
         if (it != commandMap_.end()) {
             try {
-                co_await it->second(channel, user, args);
+                co_await it->second(channel, user, args, msg.tags);
             } catch (const std::exception& e) {
                 std::cerr << "[CommandDispatcher] Handler for '"
                           << cmd << "' threw exception: " << e.what() << "\n";

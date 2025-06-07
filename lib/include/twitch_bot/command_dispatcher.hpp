@@ -23,9 +23,13 @@ using ChatListener = std::function<void(std::string_view channel,
 /// Called when a registered command (for example, "!join") is invoked.
 /// Returns an awaitable<void> that will be co_awaited by the dispatcher.
 using CommandHandler = std::function<
-    boost::asio::awaitable<void>(std::string_view channel,
-                                  std::string_view user,
-                                  std::string_view args)>;
+    boost::asio::awaitable<void>(
+        std::string_view channel,
+        std::string_view user,
+        std::string_view args,
+        const std::unordered_map<std::string_view, std::string_view>& tags
+    )
+>;
 
 /**
  * @brief Inspects each IrcMessage. If it is a PRIVMSG starting with '!',

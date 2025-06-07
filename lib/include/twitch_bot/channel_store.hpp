@@ -20,53 +20,42 @@ struct ChannelInfo {
     std::optional<std::string> alias;
 };
 
-/// Simple in-process store of channels and (optional) aliases.
-/// Persisted to a TOML file, e.g.:
-///
-/// [somechannel]
-/// alias = "someAlias"
-///
-/// [otherchannel]
-/// # no alias -> std::nullopt
+/// In-memory store of channels and optional aliases.
+/// Persisted atomically to a TOML file at construction path.
 class ChannelStore {
 public:
-    /// Construct a ChannelStore that reads/writes to 'filepath'.
-    /// @param filepath  Path to TOML file (default: "channels.toml").
+    /// Construct a store backed by 'filepath' (default "channels.toml").
     explicit ChannelStore(std::filesystem::path filepath = "channels.toml");
 
-    ~ChannelStore() noexcept = default;
-    ChannelStore(const ChannelStore&) = delete;
-    ChannelStore& operator=(const ChannelStore&) = delete;
-    ChannelStore(ChannelStore&&) noexcept = default;
-    ChannelStore& operator=(ChannelStore&&) noexcept = default;
-
-    /// Load the TOML file into memory. On parse or I/O error, logs and leaves data unchanged.
+    /// Load from disk. On parse or I/O error, logs and leaves data unchanged.
     void load();
 
-    /// Save current data to disk atomically (write to ".tmp", then rename). Logs on failure.
+    /// Save to disk atomically (write to ".tmp" then rename). Logs on failure.
     void save() const;
 
-    /// Add a new channel (no alias). If already present, does nothing.
+    /// Add channel (no alias). No-op if already present.
     void addChannel(std::string_view channel);
 
-    /// Remove a channel. If not present, does nothing.
+    /// Remove channel. No-op if not present.
     void removeChannel(std::string_view channel);
 
-    /// @return Vector of all stored channel names.
-    std::vector<ChannelName> allChannels() const;
+    /// @return true if the channel is already in the store.
+    bool contains(std::string_view channel) const noexcept {
+        return channelData_.find(channel) != channelData_.end();
+    }
 
     /// @return Alias if set and channel exists; otherwise std::nullopt.
     std::optional<std::string> getAlias(std::string_view channel) const;
 
-    /// Set or clear alias for an existing channel. If channel not present, does nothing.
+    /// Set or clear alias for existing channel. No-op if not present.
     void setAlias(std::string_view channel,
                   std::optional<std::string> alias);
 
+    /// @return List of all stored channel names.
+    std::vector<ChannelName> allChannels() const;
+
 private:
     std::filesystem::path filename_;
-
-    // Heterogeneous-lookup map: key = channel name, value = ChannelInfo.
-    // TransparentStringHash/Eq allow zero-overhead lookup with string_view.
     std::unordered_map<
         std::string,
         ChannelInfo,

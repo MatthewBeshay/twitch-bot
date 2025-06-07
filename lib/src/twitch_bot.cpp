@@ -40,53 +40,113 @@ TwitchBot::TwitchBot(std::string oauthToken,
     // Create CommandDispatcher
     dispatcher_ = std::make_unique<CommandDispatcher>();
 
-    // Register "!join <channel>" (only allowed in controlChannel_)
-    dispatcher_->registerCommand("!join",
-        [this](std::string_view channel,
-               std::string_view user,
-               std::string_view args) -> boost::asio::awaitable<void>
+    // Register "!join <channel>" (only in control channel; args require broadcaster or mod)
+    dispatcher_->registerCommand(
+        "!join",
+        [this](
+            std::string_view channel,
+            std::string_view user,
+            std::string_view args,
+            const std::unordered_map<std::string_view, std::string_view>& tags
+            ) -> boost::asio::awaitable<void>
         {
-            // Only allow joins from the control channel
-            if (std::string(channel) == controlChannel_) {
-                // If args is non-empty, that is the channel to join;
-                // otherwise use invoking user's name as the channel.
-                std::string newChannel = !args.empty()
-                    ? std::string(args)
-                    : std::string(user);
-
-                channelStore_->addChannel(newChannel);
-                channelStore_->save();
-
-                co_await ircClient_->sendLine("JOIN #" + newChannel);
-                co_await ircClient_->sendLine(
-                    "PRIVMSG #" + controlChannel_ + " :Joined " + newChannel);
+            // Only control channel may issue joins.
+            if (channel != controlChannel_) {
+                co_return;
             }
-            co_return;
-        });
 
-    // Register "!leave <channel>" (only allowed in controlChannel_)
-    dispatcher_->registerCommand("!leave",
-        [this](std::string_view channel,
-               std::string_view user,
-               std::string_view args) -> boost::asio::awaitable<void>
+            // If args given, only broadcaster or mod may specify a different channel.
+            if (!args.empty()) {
+                bool isBroadcaster = (user == channel);
+                bool isMod = false;
+                if (auto it = tags.find("mod");
+                    it != tags.end() && it->second == "1")
+                {
+                    isMod = true;
+                }
+                if (!isBroadcaster && !isMod) {
+                    co_return;
+                }
+            }
+
+            // Decide target channel.
+            std::string target = !args.empty()
+                ? std::string(args)
+                : std::string(user);
+
+            // Constant-time presence check.
+            if (channelStore_->contains(target)) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + controlChannel_
+                    + " :Already in channel " + target
+                );
+                co_return;
+            }
+
+            channelStore_->addChannel(target);
+            channelStore_->save();
+
+            co_await ircClient_->sendLine("JOIN #" + target);
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + controlChannel_ + " :@" + std::string(user) + " Joined " + target
+            );
+            co_return;
+        }
+    );
+
+    // Register "!leave <channel>" (only in control channel; args require broadcaster or mod)
+    dispatcher_->registerCommand(
+        "!leave",
+        [this](
+            std::string_view channel,
+            std::string_view user,
+            std::string_view args,
+            const std::unordered_map<std::string_view, std::string_view>& tags
+            ) -> boost::asio::awaitable<void>
         {
-            // Only allow parts from the control channel
-            if (std::string(channel) == controlChannel_) {
-                // If args is non-empty, that is the channel to part;
-                // otherwise use invoking user's name as the channel.
-                std::string remChannel = !args.empty()
-                    ? std::string(args)
-                    : std::string(user);
-
-                channelStore_->removeChannel(remChannel);
-                channelStore_->save();
-
-                co_await ircClient_->sendLine("PART #" + remChannel);
-                co_await ircClient_->sendLine(
-                    "PRIVMSG #" + controlChannel_ + " :Left " + remChannel);
+            // Only control channel may issue parts.
+            if (channel != controlChannel_) {
+                co_return;
             }
+
+            // If args given, only broadcaster or mod may specify a channel.
+            if (!args.empty()) {
+                bool isBroadcaster = (user == channel);
+                bool isMod = false;
+                if (auto it = tags.find("mod");
+                    it != tags.end() && it->second == "1")
+                {
+                    isMod = true;
+                }
+                if (!isBroadcaster && !isMod) {
+                    co_return;
+                }
+            }
+
+            // Decide channel to part.
+            std::string target = !args.empty()
+                ? std::string(args)
+                : std::string(user);
+
+            // Constant-time absence check.
+            if (!channelStore_->contains(target)) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + controlChannel_
+                    + " :Not in channel " + target
+                );
+                co_return;
+            }
+
+            channelStore_->removeChannel(target);
+            channelStore_->save();
+
+            co_await ircClient_->sendLine("PART #" + target);
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + controlChannel_ + " :@" + std::string(user) + " Left " + target
+            );
             co_return;
-        });
+        }
+    );
 
     // Create IrcClient using shared I/O and SSL contexts
     ircClient_ = std::make_unique<IrcClient>(

@@ -2,10 +2,8 @@
 
 #include <fstream>
 #include <iostream>
-#include <filesystem>
 #include <sstream>
-
-#include <toml++/toml.hpp>
+#include <system_error>
 
 namespace twitch_bot {
 
@@ -15,126 +13,94 @@ ChannelStore::ChannelStore(std::filesystem::path filepath)
 
 void ChannelStore::load()
 {
-    namespace fs = std::filesystem;
-
-    // If the file does not exist, there is nothing to load.
-    if (!fs::exists(filename_)) {
+    if (!std::filesystem::exists(filename_)) {
         return;
     }
 
     toml::table tbl;
     try {
         tbl = toml::parse_file(filename_.string());
-    }
-    catch (const toml::parse_error& err) {
+    } catch (const toml::parse_error& err) {
         std::cerr << "[ChannelStore] Failed to parse TOML '"
-                  << filename_ << "':\n"
-                  << err << "\n";
+                  << filename_ << "': " << err << "\n";
         return;
-    }
-    catch (const std::exception& ex) {
-        std::cerr << "[ChannelStore] Error while parsing TOML '"
+    } catch (const std::exception& ex) {
+        std::cerr << "[ChannelStore] Error parsing '"
                   << filename_ << "': " << ex.what() << "\n";
         return;
     }
 
-    // Replace in-memory data with on-disk contents.
     channelData_.clear();
     channelData_.reserve(tbl.size());
 
-    // Each child table [channel] represents one channel entry.
     for (auto const& [key, val] : tbl) {
-        if (auto const* channelTable = val.as_table()) {
+        if (auto const* chTbl = val.as_table()) {
             ChannelInfo info;
-
-            // If an "alias" key is present and is a string, store it.
-            if (auto aliasNode = channelTable->get("alias");
-                aliasNode && aliasNode->is_string())
+            if (auto node = chTbl->get("alias");
+                node && node->is_string())
             {
-                info.alias = aliasNode->value<std::string>();
-            } else {
-                info.alias = std::nullopt;
+                info.alias = node->value<std::string>();
             }
-
-            // Insert the channel name (key) and its info into the map.
-            channelData_.emplace(std::string{key}, std::move(info));
+            channelData_.emplace(std::string(key), std::move(info));
         }
-        // Ignore any non-table entries.
     }
 }
 
 void ChannelStore::save() const
 {
     toml::table tbl;
-
-    // Build a TOML table for each channel.
-    for (auto const& [channel, info] : channelData_) {
-        toml::table channelTbl;
+    for (auto const& [ch, info] : channelData_) {
+        toml::table entry;
         if (info.alias) {
-            channelTbl.insert("alias", *info.alias);
+            entry.insert("alias", *info.alias);
         }
-        tbl.insert(channel, std::move(channelTbl));
+        tbl.insert(ch, std::move(entry));
     }
 
-    // Serialize the entire table to a string.
     std::ostringstream oss;
     oss << tbl;
-    const std::string serialized = oss.str();
+    const auto data = oss.str();
 
-    // Write to a temporary file, then rename to enforce atomic-ish update.
-    const std::string tmpName = filename_.string() + ".tmp";
+    const auto tmp = filename_.string() + ".tmp";
     {
-        std::ofstream out(tmpName, std::ios::trunc);
+        std::ofstream out(tmp, std::ios::trunc);
         if (!out) {
             std::cerr << "[ChannelStore] Cannot open '"
-                      << tmpName << "' for writing\n";
+                      << tmp << "' for writing\n";
             return;
         }
-        out << serialized;
+        out << data;
         if (!out) {
-            std::cerr << "[ChannelStore] Error while writing to '"
-                      << tmpName << "'\n";
+            std::cerr << "[ChannelStore] Error writing to '"
+                      << tmp << "'\n";
             return;
         }
     }
 
     std::error_code ec;
-    std::filesystem::rename(std::filesystem::path{tmpName}, filename_, ec);
+    std::filesystem::rename(tmp, filename_, ec);
     if (ec) {
-        std::cerr << "[ChannelStore] Failed to overwrite '"
-                  << filename_ << "' with '" << tmpName
-                  << "': " << ec.message() << "\n";
-        std::filesystem::remove(std::filesystem::path{tmpName}, ec);
+        std::cerr << "[ChannelStore] Rename failed: "
+                  << ec.message() << "\n";
+        std::filesystem::remove(tmp, ec);
     }
 }
 
 void ChannelStore::addChannel(std::string_view channel)
 {
-    // Inserts a new channel if it does not already exist.
-    channelData_.try_emplace(std::string{channel}, ChannelInfo{});
+    channelData_.try_emplace(std::string(channel), ChannelInfo{});
 }
 
 void ChannelStore::removeChannel(std::string_view channel)
 {
-    // Find by heterogeneous lookup; if found, erase it.
     auto it = channelData_.find(channel);
-    if (it == channelData_.end()) {
-        return;
+    if (it != channelData_.end()) {
+        channelData_.erase(it);
     }
-    channelData_.erase(it);
 }
 
-std::vector<ChannelName> ChannelStore::allChannels() const
-{
-    std::vector<ChannelName> result;
-    result.reserve(channelData_.size());
-    for (auto const& [chan, _info] : channelData_) {
-        result.push_back(chan);
-    }
-    return result;
-}
-
-std::optional<std::string> ChannelStore::getAlias(std::string_view channel) const
+std::optional<std::string> ChannelStore::getAlias(
+    std::string_view channel) const
 {
     auto it = channelData_.find(channel);
     if (it == channelData_.end()) {
@@ -146,11 +112,21 @@ std::optional<std::string> ChannelStore::getAlias(std::string_view channel) cons
 void ChannelStore::setAlias(std::string_view channel,
                             std::optional<std::string> alias)
 {
-    auto it = channelData_.find(channel);
-    if (it == channelData_.end()) {
-        return;
+    if (auto it = channelData_.find(channel);
+        it != channelData_.end())
+    {
+        it->second.alias = std::move(alias);
     }
-    it->second.alias = std::move(alias);
+}
+
+std::vector<ChannelName> ChannelStore::allChannels() const
+{
+    std::vector<ChannelName> list;
+    list.reserve(channelData_.size());
+    for (auto const& [ch, _] : channelData_) {
+        list.push_back(ch);
+    }
+    return list;
 }
 
 } // namespace twitch_bot
