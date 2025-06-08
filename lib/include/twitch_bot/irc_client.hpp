@@ -1,101 +1,110 @@
-﻿#pragma once
+﻿// irc_client.hpp
+#pragma once
 
 #include <array>
-#include <functional>
-#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ssl/context.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/beast/core.hpp>
-#include <boost/beast/websocket.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ssl/context.hpp>
+#include <boost/asio/ssl/stream.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/buffer.hpp>
+
+#include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/websocket/ssl.hpp>
+#include <boost/beast/websocket/stream.hpp>
 
 namespace twitch_bot {
 
-namespace asio  = boost::asio;
-namespace beast = boost::beast;
-namespace ws    = beast::websocket;
-namespace ssl   = asio::ssl;
-using tcp       = asio::ip::tcp;
-
-/// A coroutine-only IRC client over WebSocket + SSL.
-/// Provides only asynchronous methods; do not mix any blocking calls.
+/// IRC client over WSS. All methods are async and non-blocking.
 class IrcClient {
 public:
-    /// Construct an IrcClient bound to the given I/O context and SSL context.
-    /// @param ioc          The asio::io_context to drive I/O.
-    /// @param ssl_ctx      The asio::ssl::context for TLS.
-    /// @param oauth_token  Twitch chat OAuth token (without leading "oauth:").
-    /// @param nickname     Twitch username (bot's account name).
-    IrcClient(asio::io_context&  ioc,
-              ssl::context&      ssl_ctx,
-              std::string_view   oauth_token,
-              std::string_view   nickname) noexcept;
+    /// Construct with executor, TLS context, OAuth token and nick.
+    IrcClient(boost::asio::any_io_executor exec,
+              boost::asio::ssl::context&    ssl_ctx,
+              std::string_view              oauth_token,
+              std::string_view              nickname) noexcept;
 
-    ~IrcClient() noexcept;
-
+    ~IrcClient() = default;
     IrcClient(const IrcClient&) = delete;
     IrcClient& operator=(const IrcClient&) = delete;
 
-    /// Move-constructible.
-    IrcClient(IrcClient&&) noexcept = default;
+    /// Resolve, handshake TCP→SSL→WS, authenticate and JOIN channels.
+    /// @channels Span of channel names (no leading '#').
+    boost::asio::awaitable<void>
+    connect(std::span<const std::string_view> channels) noexcept;
 
-    /// Not move-assignable (websocket::stream is move-constructible but not move-assignable).
-    IrcClient& operator=(IrcClient&&) noexcept = delete;
+    /// Send one IRC line (msg + CRLF) with zero heap alloc.
+    boost::asio::awaitable<void>
+    sendLine(std::string_view msg) noexcept;
 
-    /// Resolve, perform TCP→SSL→WebSocket handshake, send PASS/NICK/CAP, and JOIN channels.
-    /// Steps:
-    ///   1) Resolve "irc-ws.chat.twitch.tv:443"
-    ///   2) Connect TCP socket
-    ///   3) Perform SSL handshake
-    ///   4) Perform WebSocket handshake
-    ///   5) Send PASS, NICK, and CAP REQ lines
-    ///   6) Join each channel in channels_to_join (no leading '#')
-    /// @param channels_to_join  List of channel names (e.g. {"somechannel", "otherchannel"}).
-    /// @return                  An awaitable<void> that completes after JOINs are sent.
-    asio::awaitable<void> connect(std::vector<std::string> const& channels_to_join);
+    /// Send raw buffers (zero alloc) on the WebSocket.
+    boost::asio::awaitable<void>
+    sendBuffers(std::span<const boost::asio::const_buffer> bufs) noexcept;
 
-    /// Send one IRC line over the WebSocket (automatically appends "\r\n" if missing).
-    /// @param msg  The IRC payload (e.g. "PRIVMSG #channel :hello world").
-    /// @return     An awaitable<void> that completes when the frame is sent.
-    asio::awaitable<void> sendLine(std::string_view msg) noexcept;
+    /// Read frames, split on CRLF, invoke callback per line.
+    template<class F>
+    boost::asio::awaitable<void>
+    readLoop(F&& callback) noexcept;
 
-    /// Read exactly one WebSocket text frame and return its contents (without CRLF).
-    /// @return An awaitable<std::string> containing the frame payload.
-    asio::awaitable<std::string> readLine() noexcept;
+    /// Send a PING every 4 minutes until close() is called.
+    boost::asio::awaitable<void>
+    pingLoop() noexcept;
 
-    /// Continuously read WebSocket frames, split into IRC lines (by "\r\n"),
-    /// and invoke user_callback(raw_line) for each line. Never returns unless close() is called.
-    /// @param user_callback  Called with each complete IRC line (without CRLF).
-    /// @return               An awaitable<void> that loops until the connection closes.
-    asio::awaitable<void> readLoop(std::function<void(std::string_view)> user_callback) noexcept;
-
-    /// Periodically send "PING :tmi.twitch.tv" every four minutes.
-    /// Never returns until close() is called (which cancels the timer).
-    /// @return An awaitable<void> that drives the ping loop.
-    asio::awaitable<void> pingLoop() noexcept;
-
-    /// Immediately close the underlying WebSocket/TCP socket and cancel the ping timer.
+    /// Cancel ping timer and initiate non-blocking WS+SSL close.
     void close() noexcept;
 
 private:
-    // Underlying Beast WebSocket-over-SSL stream (TCP → SSL → WebSocket).
-    ws::stream<ssl::stream<tcp::socket>> ws_;
+    using tcp_socket_t = boost::asio::ip::tcp::socket;
+    using ssl_stream_t = boost::asio::ssl::stream<tcp_socket_t>;
+    using ws_stream_t  = boost::beast::websocket::stream<ssl_stream_t>;
 
-    // Timer for periodic PINGs.
-    asio::steady_timer ping_timer_;
+    ws_stream_t               ws_;           // WebSocket-over-SSL stream
+    boost::asio::steady_timer ping_timer_;
+    boost::beast::flat_buffer read_buffer_;
 
-    // Bot credentials.
     std::string oauth_token_;
     std::string nickname_;
 
-    // Constant for CRLF framing.
-    static inline constexpr char const* CRLF = "\r\n";
+    static inline constexpr char CRLF_[3] = "\r\n";
 };
+
+template<class F>
+boost::asio::awaitable<void>
+IrcClient::readLoop(F&& callback) noexcept
+{
+    for (;;) {
+        co_await ws_.async_read(read_buffer_, boost::asio::use_awaitable);
+
+        auto data = read_buffer_.data();
+        std::string_view chunk{
+            reinterpret_cast<const char*>(data.data()),
+            data.size()
+        };
+        read_buffer_.consume(data.size());
+
+        std::size_t pos = 0;
+        while (pos < chunk.size()) {
+            auto next = chunk.find(CRLF_, pos);
+            std::string_view line = chunk.substr(
+                pos,
+                next == std::string_view::npos
+                  ? chunk.size() - pos
+                  : next - pos
+            );
+            pos = (next == std::string_view::npos)
+                ? chunk.size()
+                : next + 2;
+            if (!line.empty()) {
+                callback(line);
+            }
+        }
+    }
+}
 
 } // namespace twitch_bot

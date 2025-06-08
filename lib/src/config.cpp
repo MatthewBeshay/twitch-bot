@@ -1,103 +1,81 @@
 ﻿#include "config.hpp"
 
-#include <filesystem>
-#include <sstream>
+#include <utility>
 
 #include <toml++/toml.hpp>
 
 namespace {
 
-/// Join ["twitch","chat","oauth_token"] → "twitch.chat.oauth_token"
-std::string join_keys(std::initializer_list<std::string_view> keys) noexcept {
-    std::string out;
-    out.reserve(64);
-    bool first = true;
-    for (auto k : keys) {
-        if (!first) out.push_back('.');
-        out.append(k);
-        first = false;
-    }
-    return out;
-}
+/// Central parsing routine: throws EnvError on any failure.
+env::Config parseConfig(const std::filesystem::path& path) {
+    using namespace std::literals;
+    const std::string pathStr = path.string();
 
-/// Fetch a string at a dotted‐path in the TOML table or throw EnvError.
-std::string fetch_string(const toml::table& tbl,
-                         const std::filesystem::path& path,
-                         std::initializer_list<std::string_view> keys)
-{
-    auto dotted = join_keys(keys);
-    auto node   = tbl.at_path(dotted);
-    if (auto opt = node.template value<std::string>(); opt) {
-        return *opt;
+    toml::table tbl;
+    try {
+        tbl = toml::parse_file(pathStr);
     }
-    throw env::EnvError{
-        "Missing or invalid key [" + dotted + "] in " + path.string()
+    catch (const toml::parse_error& e) {
+        throw env::EnvError{"TOML parse error in '"s + pathStr + "': "s + e.what()};
+    }
+    catch (const std::filesystem::filesystem_error& e) {
+        throw env::EnvError{"Cannot read config '"s + pathStr + "': "s + e.what()};
+    }
+
+    // Helper that drills into tbl via a list of keys.
+    auto fetchString = [&](std::initializer_list<std::string_view> keys) -> std::string {
+        const toml::node* node = &tbl;
+        for (auto key : keys) {
+            // Each step must be a table
+            auto tblPtr = node->as_table();
+            if (!tblPtr) {
+                throw env::EnvError{"Expected table at '" + std::string(key) + "' in " + pathStr};
+            }
+            auto found = tblPtr->get(key);
+            if (!found) {
+                // build a dotted key path for the error
+                std::string dotted;
+                for (auto k : keys) {
+                    if (!dotted.empty()) dotted += '.';
+                    dotted += k;
+                }
+                throw env::EnvError{"Missing key '" + dotted + "' in " + pathStr};
+            }
+            node = found;
+        }
+        if (auto opt = node->value<std::string>()) {
+            return *opt;
+        }
+        throw env::EnvError{"Value at requested key is not a string in " + pathStr};
+    };
+
+    return {
+        fetchString({"twitch", "chat", "oauth_token"}),
+        fetchString({"twitch", "chat", "refresh_token"}),
+        fetchString({"twitch", "app",  "client_id"}),
+        fetchString({"twitch", "app",  "client_secret"}),
+        fetchString({"twitch", "bot",  "channel"})
     };
 }
 
-/// Parse the TOML file at @p path and return a populated Config.
-/// @throws EnvError on parse failure or missing keys.
-env::Config parseToml(const std::filesystem::path& path) {
-    toml::table tbl;
-
-#if TOML_EXCEPTIONS
-    try {
-        tbl = toml::parse_file(path.string());
-    }
-    catch (const toml::parse_error& err) {
-        std::ostringstream oss;
-        oss << "TOML parse error in '" << path << "': " << err;
-        throw env::EnvError{oss.str()};
-    }
-    catch (const std::exception& ex) {
-        throw env::EnvError{
-            "Failed to load '" + path.string() + "': " + ex.what()
-        };
-    }
-#else
-    auto result = toml::parse_file(path.string());
-    if (!result) {
-        std::ostringstream oss;
-        oss << "TOML parse error in '" << path << "': " << result.error();
-        throw env::EnvError{oss.str()};
-    }
-    tbl = *result;
-#endif
-
-    env::Config cfg;
-    cfg.twitchChatOauthToken   = fetch_string(tbl, path, {"twitch","chat","oauth_token"});
-    cfg.twitchChatRefreshToken = fetch_string(tbl, path, {"twitch","chat","refresh_token"});
-    cfg.twitchAppClientId      = fetch_string(tbl, path, {"twitch","app","client_id"});
-    cfg.twitchAppClientSecret  = fetch_string(tbl, path, {"twitch","app","client_secret"});
-    cfg.twitchBotChannel       = fetch_string(tbl, path, {"twitch","bot","channel"});
-    return cfg;
-}
-
-/// Locate “config.toml”-check CWD first, then fallback to CMake‐baked path.
-std::filesystem::path findConfigFile() noexcept {
-    auto cwd       = std::filesystem::current_path();
-    auto candidate = cwd / "config.toml";
-    if (std::filesystem::exists(candidate)) {
-        return candidate;
-    }
-    return getConfigPath();  // from config_path.hpp
-}
-
-} // anonymous namespace
+} // namespace
 
 namespace env {
 
-Config Config::load(const std::filesystem::path& tomlFilePath) {
-    if (!std::filesystem::exists(tomlFilePath)) {
-        throw EnvError{
-            "Config file not found: " + tomlFilePath.string()
-        };
-    }
-    return parseToml(tomlFilePath);
+EnvError::EnvError(std::string msg) noexcept
+    : std::runtime_error(std::move(msg))
+{}
+
+Config Config::loadFile(const std::filesystem::path& path) {
+    return parseConfig(path);
 }
 
 Config Config::load() {
-    return load(findConfigFile());
+    auto p = getConfigPath();
+    if (!std::filesystem::exists(p)) {
+        throw EnvError{"Config file not found at '" + p.string() + "'"};
+    }
+    return parseConfig(p);
 }
 
 } // namespace env

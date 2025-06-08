@@ -7,15 +7,6 @@ find_package(Boost        REQUIRED COMPONENTS asio beast json)
 find_package(OpenSSL      REQUIRED)
 find_package(tomlplusplus CONFIG REQUIRED)
 
-# -- Bake in the default path for config.toml ----------------------------------
-#    (this file is lib/include/config_path.hpp.in)
-set(CONFIG_FILE_PATH "${CMAKE_SOURCE_DIR}/config.toml")
-configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/config_path.hpp.in"
-  "${CMAKE_BINARY_DIR}/generated/config_path.hpp"
-  @ONLY
-)
-
 # -- Gather all public headers (for IDE grouping only) -------------------------
 file(GLOB_RECURSE TB_HEADERS
   CONFIGURE_DEPENDS

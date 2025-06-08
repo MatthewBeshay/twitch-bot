@@ -1,78 +1,63 @@
 ﻿#pragma once
 
-#include "twitch_bot/command_dispatcher.hpp"
-#include "twitch_bot/irc_client.hpp"
-#include "twitch_bot/helix_client.hpp"
-#include "twitch_bot/channel_store.hpp"
+#include "command_dispatcher.hpp"
+#include "irc_client.hpp"
+#include "helix_client.hpp"
+#include "channel_store.hpp"
 
-#include <functional>
-#include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
+#include <span>
+#include <memory>
+#include <thread>
+#include <algorithm>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl/context.hpp>
-#include <boost/asio/steady_timer.hpp>
 
 namespace twitch_bot {
 
-/// Glue class that ties together:
-///   - IrcClient          (network + IRC framing)
-///   - CommandDispatcher  (dispatch commands + chat callbacks)
-///   - HelixClient        (OAuth + Helix calls)
-///   - ChannelStore       (load/save channel list)
-///
-/// Public API:
-///   - TwitchBot(oauthToken, clientId, clientSecret, controlChannel)
-///   - ~TwitchBot()
-///   - void run()                   // blocks until termination
-///   - void addChatListener(cb)     // register 'on chat' callbacks
+/// High‐level bot tying together IRC, commands, Helix and channel storage.
+/// Runs on a pool of threads for fully non‐blocking I/O.
 class TwitchBot {
 public:
-    /// Construct a TwitchBot.
-    /// @param oauthToken      OAuth token for Twitch chat (PASS).
-    /// @param clientId        Twitch App client ID (Helix).
-    /// @param clientSecret    Twitch App client secret (Helix).
-    /// @param controlChannel  Channel where bot listens for control commands.
-    TwitchBot(std::string oauthToken,
-              std::string clientId,
-              std::string clientSecret,
-              std::string controlChannel);
+    TwitchBot(std::string        oauthToken,
+              std::string        clientId,
+              std::string        clientSecret,
+              std::string        controlChannel,
+              std::size_t        threads = std::thread::hardware_concurrency());
 
     ~TwitchBot() noexcept;
 
     TwitchBot(const TwitchBot&) = delete;
     TwitchBot& operator=(const TwitchBot&) = delete;
 
-    /// Start the bot. This will:
-    ///   1) Load channels from disk
-    ///   2) co_spawn runBot()
-    ///   3) block in ioc_.run() until shutdown
+    /// Start the bot and block until stopped.
     void run();
 
-    /// Register a chat listener (called on every PRIVMSG that is not a bot command).
-    /// Internally this calls dispatcher_.registerChatListener(cb).
+    /// Register a listener for every non-command chat message.
     void addChatListener(ChatListener cb);
 
 private:
-    /// Main coroutine: connects, spawns ping/read loops, then idles forever.
     boost::asio::awaitable<void> runBot();
 
-    // Underlying components
-    boost::asio::io_context           ioc_;
-    boost::asio::ssl::context         ssl_ctx_;
+    boost::asio::io_context      ioc_;
+    boost::asio::ssl::context    ssl_ctx_;
+    const std::string            controlChannel_;
 
-    std::unique_ptr<IrcClient>        ircClient_;
-    std::unique_ptr<CommandDispatcher> dispatcher_;
-    std::unique_ptr<HelixClient>      helixClient_;
-    std::unique_ptr<ChannelStore>     channelStore_;
+    IrcClient             ircClient_;
+    CommandDispatcher     dispatcher_;
+    HelixClient           helixClient_;
+    ChannelStore          channelStore_;
 
-    // Immutable configuration
-    const std::string                  oauthToken_;
-    const std::string                  clientId_;
-    const std::string                  clientSecret_;
-    const std::string                  controlChannel_;
+    const std::size_t     threadCount_;
+    std::vector<std::thread> threads_;
+
+    const std::string     oauthToken_;
+    const std::string     clientId_;
+    const std::string     clientSecret_;
 };
 
 } // namespace twitch_bot

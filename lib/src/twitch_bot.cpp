@@ -3,233 +3,242 @@
 
 #include <algorithm>
 #include <iostream>
-#include <string>
-#include <string_view>
 #include <vector>
+#include <string_view>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/beast/websocket/ssl.hpp>
 
 namespace twitch_bot {
 
 TwitchBot::TwitchBot(std::string oauthToken,
                      std::string clientId,
                      std::string clientSecret,
-                     std::string controlChannel)
-    : ioc_()
-    , ssl_ctx_(boost::asio::ssl::context::tlsv12_client)
-    , oauthToken_(std::move(oauthToken))
-    , clientId_(std::move(clientId))
-    , clientSecret_(std::move(clientSecret))
-    , controlChannel_(std::move(controlChannel))
+                     std::string controlChannel,
+                     std::size_t threads)
+  : ioc_(static_cast<int>(threads > 0 ? threads : 1))
+  , ssl_ctx_(boost::asio::ssl::context::tlsv12_client)
+  , controlChannel_(std::move(controlChannel))
+  , ircClient_(ioc_.get_executor(),
+               ssl_ctx_,
+               oauthToken,
+               controlChannel_)
+    , dispatcher_(
+            ioc_.get_executor()
+      )
+  , helixClient_(ioc_.get_executor(),
+                 ssl_ctx_,
+                 clientId,
+                 clientSecret)
+  , channelStore_(ioc_.get_executor())
+  , threadCount_(threads > 0 ? threads : 1)
+  , oauthToken_(std::move(oauthToken))
+  , clientId_(std::move(clientId))
+  , clientSecret_(std::move(clientSecret))
 {
-    // Configure SSL context
     ssl_ctx_.set_default_verify_paths();
+    channelStore_.load();
 
-    // Load persisted channels from disk
-    channelStore_ = std::make_unique<ChannelStore>();
-    channelStore_->load();
-
-    // Create HelixClient with shared I/O and SSL contexts
-    helixClient_ = std::make_unique<HelixClient>(
-        ioc_, ssl_ctx_, clientId_, clientSecret_);
-
-    // Create CommandDispatcher
-    dispatcher_ = std::make_unique<CommandDispatcher>();
-
-    // Register "!join <channel>" (only in control channel; args require broadcaster or mod)
-    dispatcher_->registerCommand(
-        "!join",
-        [this](
-            std::string_view channel,
-            std::string_view user,
-            std::string_view args,
-            const std::unordered_map<std::string_view, std::string_view>& tags
-            ) -> boost::asio::awaitable<void>
+    // !join handler
+    dispatcher_.registerCommand("!join",
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args,
+               const TagList& tags) -> boost::asio::awaitable<void>
         {
-            // Only control channel may issue joins.
-            if (channel != controlChannel_) {
+            // 1) Only react in our control channel
+            if (channel != controlChannel_)
+                co_return;
+
+            // 2) Only the broadcaster or a moderator may join arbitrary channels
+            const bool isBroadcaster = (user == channel);
+            const bool isModerator   = std::any_of(
+                tags.begin(), tags.end(),
+                [](auto const& kv){
+                    return kv.first == "mod" && kv.second == "1";
+                });
+            if (!args.empty() && !isBroadcaster && !isModerator)
+                co_return;
+
+            // 3) Figure out which channel to join
+            std::string_view target = args.empty() ? user : args;
+
+            // 4) Already in store?
+            if (channelStore_.contains(target)) {
+                // Notify “already in channel”
+                std::string msg;
+                msg.reserve(11 + controlChannel_.size() + 21 + target.size());
+                msg.append("PRIVMSG #")
+                   .append(controlChannel_)
+                   .append(" :Already in channel ")
+                   .append(target);
+                co_await ircClient_.sendLine(msg);
                 co_return;
             }
 
-            // If args given, only broadcaster or mod may specify a different channel.
-            if (!args.empty()) {
-                bool isBroadcaster = (user == channel);
-                bool isMod = false;
-                if (auto it = tags.find("mod");
-                    it != tags.end() && it->second == "1")
-                {
-                    isMod = true;
-                }
-                if (!isBroadcaster && !isMod) {
-                    co_return;
-                }
-            }
+            // 5) Persist new channel
+            channelStore_.addChannel(target);
+            channelStore_.save();
 
-            // Decide target channel.
-            std::string target = !args.empty()
-                ? std::string(args)
-                : std::string(user);
+            // 6) JOIN with zero heap allocations
+            std::array<boost::asio::const_buffer, 3> joinCmd{{
+                boost::asio::buffer("JOIN #", 6),
+                boost::asio::buffer(target),
+                boost::asio::buffer("\r\n", 2)
+            }};
+            co_await ircClient_.sendBuffers(joinCmd);
 
-            // Constant-time presence check.
-            if (channelStore_->contains(target)) {
-                co_await ircClient_->sendLine(
-                    "PRIVMSG #" + controlChannel_
-                    + " :Already in channel " + target
-                );
-                co_return;
-            }
+            // 7) Acknowledge the join in control channel
+            std::string ack;
+            ack.reserve(12 + controlChannel_.size()
+                        + 3 + user.size()
+                        + 8 + target.size());
+            ack.append("PRIVMSG #")
+               .append(controlChannel_)
+               .append(" :@")
+               .append(user)
+               .append(" Joined ")
+               .append(target);
+            co_await ircClient_.sendLine(ack);
+        });
 
-            channelStore_->addChannel(target);
-            channelStore_->save();
-
-            co_await ircClient_->sendLine("JOIN #" + target);
-            co_await ircClient_->sendLine(
-                "PRIVMSG #" + controlChannel_ + " :@" + std::string(user) + " Joined " + target
-            );
-            co_return;
-        }
-    );
-
-    // Register "!leave <channel>" (only in control channel; args require broadcaster or mod)
-    dispatcher_->registerCommand(
-        "!leave",
-        [this](
-            std::string_view channel,
-            std::string_view user,
-            std::string_view args,
-            const std::unordered_map<std::string_view, std::string_view>& tags
-            ) -> boost::asio::awaitable<void>
+    // !leave handler
+    dispatcher_.registerCommand("!leave",
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args,
+               const TagList& tags) -> boost::asio::awaitable<void>
         {
-            // Only control channel may issue parts.
-            if (channel != controlChannel_) {
+            // 1) Only in the control channel
+            if (channel != controlChannel_)
+                co_return;
+
+            // 2) Only the broadcaster or a moderator may remove arbitrary channels
+            const bool isBroadcaster = (user == channel);
+            const bool isModerator   = std::any_of(
+                tags.begin(), tags.end(),
+                [](auto const& kv){
+                    return kv.first == "mod" && kv.second == "1";
+                });
+            if (!args.empty() && !isBroadcaster && !isModerator)
+                co_return;
+
+            // 3) Determine the target channel
+            std::string_view target = args.empty() ? user : args;
+
+            // 4) If not in store, notify and return
+            if (!channelStore_.contains(target)) {
+                std::string msg;
+                msg.reserve(11 + controlChannel_.size() + 17 + target.size());
+                msg.append("PRIVMSG #")
+                   .append(controlChannel_)
+                   .append(" :Not in channel ")
+                   .append(target);
+                co_await ircClient_.sendLine(msg);
                 co_return;
             }
 
-            // If args given, only broadcaster or mod may specify a channel.
-            if (!args.empty()) {
-                bool isBroadcaster = (user == channel);
-                bool isMod = false;
-                if (auto it = tags.find("mod");
-                    it != tags.end() && it->second == "1")
-                {
-                    isMod = true;
-                }
-                if (!isBroadcaster && !isMod) {
-                    co_return;
-                }
-            }
+            // 5) Remove from store and persist
+            channelStore_.removeChannel(target);
+            channelStore_.save();
 
-            // Decide channel to part.
-            std::string target = !args.empty()
-                ? std::string(args)
-                : std::string(user);
+            // 6) Send PART with zero heap allocations
+            std::array<boost::asio::const_buffer, 3> partCmd{{
+                boost::asio::buffer("PART #", 6),
+                boost::asio::buffer(target),
+                boost::asio::buffer("\r\n", 2)
+            }};
+            co_await ircClient_.sendBuffers(partCmd);
 
-            // Constant-time absence check.
-            if (!channelStore_->contains(target)) {
-                co_await ircClient_->sendLine(
-                    "PRIVMSG #" + controlChannel_
-                    + " :Not in channel " + target
-                );
-                co_return;
-            }
-
-            channelStore_->removeChannel(target);
-            channelStore_->save();
-
-            co_await ircClient_->sendLine("PART #" + target);
-            co_await ircClient_->sendLine(
-                "PRIVMSG #" + controlChannel_ + " :@" + std::string(user) + " Left " + target
-            );
-            co_return;
-        }
-    );
-
-    // Create IrcClient using shared I/O and SSL contexts
-    ircClient_ = std::make_unique<IrcClient>(
-        ioc_, ssl_ctx_, oauthToken_, controlChannel_);
+            // 7) Acknowledge the action
+            std::string ack;
+            ack.reserve(12 + controlChannel_.size()
+                        + 3 + user.size()
+                        + 6 + target.size());
+            ack.append("PRIVMSG #")
+               .append(controlChannel_)
+               .append(" :@")
+               .append(user)
+               .append(" Left ")
+               .append(target);
+            co_await ircClient_.sendLine(ack);
+        });
 }
 
 TwitchBot::~TwitchBot() noexcept
 {
-    // Close the IRC connection (if it exists) and stop the I/O loop
-    if (ircClient_) {
-        ircClient_->close();
-    }
+    ircClient_.close();
     ioc_.stop();
 }
 
 void TwitchBot::addChatListener(ChatListener cb)
 {
-    dispatcher_->registerChatListener(std::move(cb));
+    dispatcher_.registerChatListener(std::move(cb));
 }
 
 void TwitchBot::run()
 {
-    // (1) Launch runBot() as a detached coroutine
-    boost::asio::co_spawn(
-        ioc_,
-        [this]() -> boost::asio::awaitable<void> {
-            co_await runBot();
-        },
-        boost::asio::detached);
+    // Spawn main coroutine
+    boost::asio::co_spawn(ioc_, runBot(), boost::asio::detached);
 
-    // (2) Run the I/O loop until shutdown
+    // Launch additional I/O threads
+    threads_.reserve(threadCount_ - 1);
+    for (std::size_t i = 1; i < threadCount_; ++i) {
+        threads_.emplace_back([this]{ ioc_.run(); });
+    }
+
+    // Main thread
     ioc_.run();
+
+    // Join helpers
+    for (auto& t : threads_) if (t.joinable()) t.join();
 }
 
 boost::asio::awaitable<void> TwitchBot::runBot()
 {
-    // 1) Compute the set of channels to join (persisted + control channel)
-    auto channels = channelStore_->allChannels();
-    // Ensure we always join the control channel so we can receive commands
-    if (std::find(channels.begin(), channels.end(), controlChannel_) ==
-        channels.end())
+    // Reuse store’s string_view list directly
+    auto channels = channelStore_.channelNames();
+    if (std::find(channels.begin(), channels.end(),
+                  controlChannel_) == channels.end())
     {
         channels.push_back(controlChannel_);
     }
 
-    // 2) Establish the IRC connection and join all channels
     try {
-        co_await ircClient_->connect(channels);
+        co_await ircClient_.connect(channels);
     }
     catch (const std::exception& e) {
         std::cerr << "[TwitchBot] connect error: " << e.what() << "\n";
         co_return;
     }
 
-    // 3) Spawn two background coroutines: pingLoop() and readLoop()
-    auto executor = co_await boost::asio::this_coro::executor;
-
-    // (a) Ping loop: send PING every 4 minutes
-    boost::asio::co_spawn(executor,
+    // Ping loop
+    auto exec = co_await boost::asio::this_coro::executor;
+    boost::asio::co_spawn(exec,
         [this]() -> boost::asio::awaitable<void> {
-            co_await ircClient_->pingLoop();
+            co_await ircClient_.pingLoop();
         },
         boost::asio::detached);
 
-    // (b) Read loop: for each raw IRC line, parse and dispatch
-    boost::asio::co_spawn(executor,
-        [this]() -> boost::asio::awaitable<void> {
-            co_await ircClient_->readLoop(
-                [this](std::string_view rawLine) {
-                    // Debug print each raw IRC line
-                    std::cout << "[IRC] " << rawLine << "\n";
-                    // Parse into IrcMessage
-                    auto msg = parseIrcLine(rawLine);
-                    // Dispatch in its own coroutine so readLoop is not blocked
-                    boost::asio::co_spawn(
-                        ioc_,
-                        dispatcher_->dispatch(msg),
-                        boost::asio::detached);
+    // Read loop — format and inline dispatch
+    boost::asio::co_spawn(exec,
+        [this]() -> boost::asio::awaitable<void>
+        {
+            co_await ircClient_.readLoop(
+                [this](std::string_view raw_line)
+                {
+                    std::cout << "[IRC] " << raw_line << '\n';
+                    auto msg = parseIrcLine(raw_line);
+                    dispatcher_.dispatch(msg);
                 });
         },
         boost::asio::detached);
 
-    // 4) Idle forever (until ioc_.stop() is called)
+    // Idle forever
     boost::asio::steady_timer idle{ioc_};
     idle.expires_at(std::chrono::steady_clock::time_point::max());
     co_await idle.async_wait(boost::asio::use_awaitable);

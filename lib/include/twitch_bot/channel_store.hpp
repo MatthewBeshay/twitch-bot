@@ -4,10 +4,13 @@
 
 #include <filesystem>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+#include <boost/asio.hpp>
 
 #include <toml++/toml.hpp>
 
@@ -15,53 +18,52 @@ namespace twitch_bot {
 
 using ChannelName = std::string;
 
-/// Per-channel metadata (currently only an optional alias).
 struct ChannelInfo {
     std::optional<std::string> alias;
 };
 
-/// In-memory store of channels and optional aliases.
-/// Persisted atomically to a TOML file at construction path.
+// Maintains in-memory channel metadata and persists it atomically
+// to a TOML file via the given Asio executor. All operations are
+// safe to call from any thread.
 class ChannelStore {
 public:
-    /// Construct a store backed by 'filepath' (default "channels.toml").
-    explicit ChannelStore(std::filesystem::path filepath = "channels.toml");
+    // Supply an Asio executor for serialised file I/O and a file path.
+    explicit ChannelStore(boost::asio::any_io_executor executor,
+                          std::filesystem::path filepath = "channels.toml");
 
-    /// Load from disk. On parse or I/O error, logs and leaves data unchanged.
+    // Blocks until all pending save tasks complete.
+    ~ChannelStore();
+
+    ChannelStore(const ChannelStore&) = delete;
+    ChannelStore& operator=(const ChannelStore&) = delete;
+
+    // Load from disk; on failure leaves existing data intact.
     void load();
 
-    /// Save to disk atomically (write to ".tmp" then rename). Logs on failure.
-    void save() const;
+    // Snapshot current data and schedule a non-blocking save.
+    void save() const noexcept;
 
-    /// Add channel (no alias). No-op if already present.
-    void addChannel(std::string_view channel);
-
-    /// Remove channel. No-op if not present.
-    void removeChannel(std::string_view channel);
-
-    /// @return true if the channel is already in the store.
-    bool contains(std::string_view channel) const noexcept {
-        return channelData_.find(channel) != channelData_.end();
-    }
-
-    /// @return Alias if set and channel exists; otherwise std::nullopt.
-    std::optional<std::string> getAlias(std::string_view channel) const;
-
-    /// Set or clear alias for existing channel. No-op if not present.
+    // Modifiers and accessors; noexcept or cheap by design.
+    void addChannel(std::string_view channel) noexcept;
+    void removeChannel(std::string_view channel) noexcept;
+    bool contains(std::string_view channel) const noexcept;
+    std::optional<std::string_view> getAlias(std::string_view channel) const noexcept;
     void setAlias(std::string_view channel,
-                  std::optional<std::string> alias);
-
-    /// @return List of all stored channel names.
-    std::vector<ChannelName> allChannels() const;
+                  std::optional<std::string> alias) noexcept;
+    std::vector<std::string_view> channelNames() const noexcept;
 
 private:
-    std::filesystem::path filename_;
-    std::unordered_map<
-        std::string,
-        ChannelInfo,
-        TransparentStringHash,
-        TransparentStringEq
-    > channelData_;
+    // Build a TOML table representing current in-memory state.
+    toml::table buildTable() const;
+
+    mutable std::shared_mutex data_mutex_;
+    std::unordered_map<std::string, ChannelInfo,
+                       TransparentStringHash,
+                       TransparentStringEq> channelData_;
+
+    // Strand serialises all file-write handlers on the supplied executor.
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
+    const std::filesystem::path filename_;
 };
 
 } // namespace twitch_bot

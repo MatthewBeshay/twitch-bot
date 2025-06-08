@@ -3,95 +3,71 @@
 #include "message_parser.hpp"
 #include "utils/transparent_string.hpp"
 
-#include <functional>
 #include <string>
 #include <string_view>
+#include <functional>
 #include <vector>
 #include <unordered_map>
 
-#include <boost/asio/awaitable.hpp>
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 
 namespace twitch_bot {
 
-using ChannelName = std::string;
-
-/// Called on every PRIVMSG: (channel, user, message).
+/// Invoked on every PRIVMSG (channel, user, text).
 using ChatListener = std::function<void(std::string_view channel,
                                         std::string_view user,
-                                        std::string_view message)>;
+                                        std::string_view text)>;
 
-/// Called when a registered command (for example, "!join") is invoked.
-/// Returns an awaitable<void> that will be co_awaited by the dispatcher.
-using CommandHandler = std::function<
-    boost::asio::awaitable<void>(
-        std::string_view channel,
-        std::string_view user,
-        std::string_view args,
-        const std::unordered_map<std::string_view, std::string_view>& tags
-    )
->;
+/// Invoked when a command is seen. Runs asynchronously on the supplied executor.
+/// Parameters: channel, user, args, tags.
+using CommandHandler = std::function<boost::asio::awaitable<void>(
+    std::string_view,
+    std::string_view,
+    std::string_view,
+    TagList const&)>;
 
-/**
- * @brief Inspects each IrcMessage. If it is a PRIVMSG starting with '!',
- *        parses out the command and arguments, looks up a registered handler,
- *        and co_awaits it. Otherwise, notifies all registered ChatListener callbacks.
- */
+/// Dispatches PRIVMSGs to either registered command handlers or chat listeners.
+/// Uses a purely synchronous path for normal chat to avoid coroutine-frame overhead.
+/// Commands (leading ’!’) are spawned as coroutines on the given executor.
 class CommandDispatcher {
 public:
-    CommandDispatcher() = default;
-    ~CommandDispatcher() = default;
+    /// @param executor  Asio executor used to run command coroutines.
+    explicit CommandDispatcher(boost::asio::any_io_executor executor) noexcept;
 
-    // Non-copyable, non-movable
+    ~CommandDispatcher() = default;
     CommandDispatcher(const CommandDispatcher&) = delete;
     CommandDispatcher& operator=(const CommandDispatcher&) = delete;
 
-    /**
-     * @brief Register a handler for a specific command (including the leading '!').
-     *
-     * Example:
-     *   registerCommand("!join", [](auto ch, auto user, auto args) { ... });
-     *
-     * @param cmd      The command name (with leading '!'), e.g. "!join".
-     * @param handler  The coroutine to invoke when that command is seen.
-     */
-    void registerCommand(std::string_view cmd, CommandHandler handler)
-    {
-        // Store a std::string key, but allow lookup by string_view.
-        commandMap_.emplace(std::string(cmd), std::move(handler));
-    }
+    /// Register a handler for a command (e.g. ’!foo’). Must be done before dispatch.
+    void registerCommand(std::string_view cmd,
+                         CommandHandler handler) noexcept;
 
-    /**
-     * @brief Register a generic chat listener invoked on every PRIVMSG,
-     *        whether it's a command or plain text.
-     *
-     * @param listener  Called with (channel, user, message) for each PRIVMSG.
-     */
-    void registerChatListener(ChatListener listener)
-    {
-        chatListeners_.push_back(std::move(listener));
-    }
+    /// Register a fallback listener for non-command chat.
+    void registerChatListener(ChatListener listener) noexcept;
 
-    /**
-     * @brief Dispatch a parsed IrcMessage. If it is a PRIVMSG and the message
-     *        text starts with '!', splits it into command + args, looks up a handler
-     *        (using heterogeneous lookup), and co_awaits it. Otherwise, calls all
-     *        ChatListener callbacks.
-     *
-     * @param msg  An IrcMessage (tags/prefix/command/params/trailing) parsed earlier.
-     */
-    boost::asio::awaitable<void> dispatch(const IrcMessage& msg);
+    /// Dispatch a parsed IRC message. Returns immediately.
+    void dispatch(IrcMessage const& msg) noexcept;
 
 private:
-    // Map from command string to handler. Uses TransparentStringHash/Eq
-    // for zero-overhead lookup by string_view, const char*, or std::string.
-    std::unordered_map<
-        std::string,
-        CommandHandler,
-        TransparentStringHash,
-        TransparentStringEq
-    > commandMap_;
+    /// Remove leading ’#’ from a channel name.
+    static inline std::string_view normaliseChannel(
+        std::string_view raw) noexcept;
 
-    // List of callbacks for plain chat messages (or fallback if no command matches).
+    /// Extract the user portion before the ’!’ in the prefix.
+    static inline std::string_view extractUser(
+        std::string_view prefix) noexcept;
+
+    /// Split text of form ’!cmd args…’ into { "!cmd", "args…" }.
+    static inline std::pair<std::string_view, std::string_view> splitCommand(
+        std::string_view text) noexcept;
+
+    boost::asio::any_io_executor executor_;
+    std::unordered_map<std::string,
+                       CommandHandler,
+                       TransparentStringHash,
+                       TransparentStringEq> commandMap_;
     std::vector<ChatListener> chatListeners_;
 };
 
