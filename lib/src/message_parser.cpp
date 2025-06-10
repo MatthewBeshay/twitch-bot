@@ -1,109 +1,98 @@
 #include "message_parser.hpp"
 
-#include <string_view>
+#include <cstddef>
 
 namespace twitch_bot {
-namespace {
 
-/// Split "k[=v];k2[=v2]" into out; uses remove_prefix to advance.
-/// Expect out was cleared and reserved first.
-inline void parseTags(std::string_view tag_list,
-                      TagList&         out) noexcept
-{
-    while (!tag_list.empty()) {
-        // find delimiter
-        auto sep = tag_list.find(';');
-        auto kv  = tag_list.substr(0, sep);
-
-        if (!kv.empty()) {
-            auto eq = kv.find('=');
-            if (eq != std::string_view::npos) {
-                out.emplace_back(kv.substr(0, eq),
-                                 kv.substr(eq + 1));
-            } else {
-                out.emplace_back(kv, std::string_view{});
-            }
-        }
-
-        if (sep == std::string_view::npos)
-            break;  // done
-        tag_list.remove_prefix(sep + 1);
-    }
-}
-
-} // namespace
-
-IrcMessage parseIrcLine(std::string_view raw_line) noexcept
-{
-    IrcMessage msg;
-
-    // prepare for small number of tags/params, but cap tags at 32
-    msg.tags.clear();
-    msg.tags.reserve(32);
-    msg.params.clear();
-    msg.params.reserve(4);
-
-    const char*       data   = raw_line.data();
-    size_t            pos    = 0;
-    const size_t      length = raw_line.size();
-
-    // [1] parse tags if any
-    if (pos < length && data[pos] == '@') {
-        auto end = raw_line.find(' ', pos);
-        if (end == std::string_view::npos) {
-            parseTags(raw_line.substr(1), msg.tags);
-            return msg;
-        }
-        parseTags(raw_line.substr(1, end - 1), msg.tags);
-        pos = end + 1;
-    }
-
-    // [2] parse prefix if any
-    if (pos < length && data[pos] == ':') {
-        auto end = raw_line.find(' ', pos);
-        if (end == std::string_view::npos) {
-            msg.prefix = {data + pos + 1,
-                          length - (pos + 1)};
-            return msg;
-        }
-        msg.prefix = {data + pos + 1,
-                      end    - (pos + 1)};
-        pos = end + 1;
-    }
-
-    // [3] parse command
-    if (pos >= length)
-        return msg;
-
+    IrcMessage& parseIrcLine(std::string_view raw_line,
+        IrcMessage& msg) noexcept
     {
-        auto end = raw_line.find(' ', pos);
-        if (end == std::string_view::npos) {
-            msg.command = {data + pos,
-                           length - pos};
-            return msg;
+    // reset for this parse
+    msg.clear();
+
+    const char* begin = raw_line.data();
+    const char* end   = begin + raw_line.size();
+    const char* p     = begin;
+
+    // [1] @-tags
+    if (p < end && *p == '@') {
+        ++p; // skip '@'
+        while (p < end && *p != ' ') {
+            // parse key
+            const char* key_begin = p;
+            while (p < end && *p != '=' && *p != ';' && *p != ' ')
+                ++p;
+            std::string_view key{ key_begin,
+                static_cast<size_t>(p - key_begin) };
+
+            // parse optional value
+            std::string_view val{};
+            if (p < end && *p == '=') {
+                ++p; // skip '='
+                const char* val_begin = p;
+                while (p < end && *p != ';' && *p != ' ')
+                    ++p;
+                val = { val_begin,
+                    static_cast<size_t>(p - val_begin) };
+            }
+
+            msg.tags.emplace_back(key, val);
+
+            if (p < end && *p == ';')
+                ++p; // skip delimiter
         }
-        msg.command = {data + pos,
-                       end    - pos};
-        pos = end + 1;
+        if (p < end && *p == ' ')
+            ++p; // skip space after tags
     }
 
-    // [4] parse params + trailing
-    while (pos < length) {
-        if (data[pos] == ':') {
-            // rest is trailing
-            msg.trailing = {data + pos + 1,
-                            length - (pos + 1)};
+    // [2] prefix
+    if (p < end && *p == ':') {
+        ++p; // skip ':'
+        const char* pre_begin = p;
+        while (p < end && *p != ' ')
+            ++p;
+        msg.prefix = { pre_begin,
+            static_cast<size_t>(p - pre_begin) };
+        if (p < end)
+            ++p; // skip space
+    }
+
+    // [3] command
+    if (p < end) {
+        const char* cmd_begin = p;
+        while (p < end && *p != ' ')
+            ++p;
+        msg.command = { cmd_begin,
+            static_cast<size_t>(p - cmd_begin) };
+        if (p < end)
+            ++p; // skip space
+    }
+
+    // [4] parameters and trailing
+    const char* token_begin = p;
+    while (p < end) {
+        if (*p == ' ') {
+            // end of one parameter
+            msg.params.emplace_back(token_begin,
+                static_cast<size_t>(p - token_begin));
+            ++p; // skip space
+            token_begin = p;
+        }
+        else if (*p == ':' && token_begin == p) {
+            // trailing part: rest of line
+            ++p; // skip ':'
+            msg.trailing = { p,
+                static_cast<size_t>(end - p) };
             break;
         }
-        auto end = raw_line.find(' ', pos);
-        if (end == std::string_view::npos) {
-            msg.params.emplace_back(data + pos,
-                                    length - pos);
-            break;
+        else {
+            ++p;
         }
-        msg.params.emplace_back(data + pos,
-                                end   - pos);
-        pos = end + 1;
+    }
+    // leftover parameter if no trailing text
+    if (token_begin < end && msg.trailing.empty()) {
+        msg.params.emplace_back(token_begin,
+            static_cast<size_t>(end - token_begin));
     }
 
     return msg;

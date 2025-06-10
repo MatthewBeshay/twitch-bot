@@ -1,9 +1,0 @@
-#pragma once
-#include <filesystem>
-
-/**  
- * @returns the path to the TOML config file, baked in at CMake configure time.  
- */
-inline std::filesystem::path getConfigPath() {
-    return std::filesystem::path{ "@CONFIG_FILE_PATH@" };
-}

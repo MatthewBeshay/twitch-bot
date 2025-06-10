@@ -232,7 +232,8 @@ boost::asio::awaitable<void> TwitchBot::runBot()
                 [this](std::string_view raw_line)
                 {
                     std::cout << "[IRC] " << raw_line << '\n';
-                    auto msg = parseIrcLine(raw_line);
+                    twitch_bot::IrcMessage msg;
+                    parseIrcLine(raw_line, msg);
                     dispatcher_.dispatch(msg);
                 });
         },

@@ -2,6 +2,7 @@
 
 #include "utils/transparent_string.hpp"
 
+#include <atomic>
 #include <filesystem>
 #include <optional>
 #include <shared_mutex>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include <boost/asio.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <toml++/toml.hpp>
 
@@ -18,16 +20,16 @@ namespace twitch_bot {
 
 using ChannelName = std::string;
 
+// Information associated with a channel.
 struct ChannelInfo {
     std::optional<std::string> alias;
 };
 
-// Maintains in-memory channel metadata and persists it atomically
-// to a TOML file via the given Asio executor. All operations are
-// safe to call from any thread.
+// Manages channel metadata in memory and persists it to a TOML file.
+// All operations are thread-safe. File I/O is serialized via Asio.
 class ChannelStore {
 public:
-    // Supply an Asio executor for serialised file I/O and a file path.
+    // Construct with an Asio executor for serialized file I/O and a TOML file path.
     explicit ChannelStore(boost::asio::any_io_executor executor,
                           std::filesystem::path filepath = "channels.toml");
 
@@ -40,7 +42,7 @@ public:
     // Load from disk; on failure leaves existing data intact.
     void load();
 
-    // Snapshot current data and schedule a non-blocking save.
+    // Snapshot current data and schedule a debounced save.
     void save() const noexcept;
 
     // Modifiers and accessors; noexcept or cheap by design.
@@ -56,14 +58,20 @@ private:
     // Build a TOML table representing current in-memory state.
     toml::table buildTable() const;
 
+    // Write metadata snapshot to disk; invoked after debounce timer fires.
+    void performSave() const noexcept;
+
     mutable std::shared_mutex data_mutex_;
     std::unordered_map<std::string, ChannelInfo,
                        TransparentStringHash,
                        TransparentStringEq> channelData_;
 
-    // Strand serialises all file-write handlers on the supplied executor.
     boost::asio::strand<boost::asio::any_io_executor> strand_;
     const std::filesystem::path filename_;
+
+    mutable std::atomic<bool>         dirty_{ false };
+    mutable std::atomic<bool>         timerScheduled_{ false };
+    mutable boost::asio::steady_timer saveTimer_;
 };
 
 } // namespace twitch_bot

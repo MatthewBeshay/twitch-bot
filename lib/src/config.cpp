@@ -71,10 +71,16 @@ Config Config::loadFile(const std::filesystem::path& path) {
 }
 
 Config Config::load() {
-    auto p = getConfigPath();
+    // Always look in the current working directory
+    const std::filesystem::path p =
+        std::filesystem::current_path() / "config.toml";
+
     if (!std::filesystem::exists(p)) {
-        throw EnvError{"Config file not found at '" + p.string() + "'"};
+        throw EnvError{
+            "Config file not found in current directory: '" + p.string() + "'"
+        };
     }
+
     return parseConfig(p);
 }
 

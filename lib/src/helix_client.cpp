@@ -1,4 +1,3 @@
-// helix_client.cpp
 #include "helix_client.hpp"
 
 #include <array>
