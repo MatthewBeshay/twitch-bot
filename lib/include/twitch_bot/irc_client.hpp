@@ -1,5 +1,4 @@
-﻿// irc_client.hpp
-#pragma once
+﻿#pragma once
 
 #include <array>
 #include <span>

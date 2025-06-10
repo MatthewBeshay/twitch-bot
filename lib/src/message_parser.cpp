@@ -1,7 +1,5 @@
 #include "message_parser.hpp"
 
-#include <cstddef>
-
 namespace twitch_bot {
 
     IrcMessage& parseIrcLine(std::string_view raw_line,

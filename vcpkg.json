@@ -5,8 +5,8 @@
   "dependencies": [
     { "name": "boost-asio",  "features": [ "ssl" ] },
     "boost-beast",
-    "boost-json",
     "openssl",
-    "tomlplusplus"
+    "tomlplusplus",
+    "glaze"
   ]
 }

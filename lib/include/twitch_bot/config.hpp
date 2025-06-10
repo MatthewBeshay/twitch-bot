@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-#include "config_path.hpp"
-
 #include <filesystem>
 #include <stdexcept>
 #include <string>

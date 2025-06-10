@@ -49,6 +49,12 @@ namespace twitch_bot {
      * After the first call, no further allocations are needed
      * as long as tag/param counts stay <= your reserved sizes.
      *
+     * IRC format (briefly):
+     *   [ '@' <tags> <space> ]  [ ':' <prefix> <space> ]  <command> <params> [ ' :' <trailing> ]
+     *
+     * Example rawLine (no trailing "\r\n"):
+     *   "@badge-info=subscriber/12;color=#1E90FF :someuser!someuser@someuser.tmi.twitch.tv PRIVMSG #channel :Hello!"
+     *
      * @param raw_line  full line from server; references must remain valid
      * @param msg       the IrcMessage to populate (will be cleared)
      * @return reference to `msg` for chaining or reuse

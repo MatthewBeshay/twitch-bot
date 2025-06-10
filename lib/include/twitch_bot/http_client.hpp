@@ -3,8 +3,8 @@
 #include "utils/transparent_string.hpp"
 
 #include <string>
-#include <span>
 #include <string_view>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -13,72 +13,81 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/strand.hpp>
-
-#include <boost/json/value.hpp>
-
 #include <boost/beast/http.hpp>
+
+#include <glaze/json.hpp>
 
 namespace http_client {
 
 /// JSON value returned by HTTP client.
-using json = boost::json::value;
+using Json   = glz::json_t;
+/// Result type: parsed JSON or an error context on failure.
+using Result = glz::expected<Json, glz::error_ctx>;
+
+/// Compile-time JSON parse options (null-terminated, allow unknown keys, minified).
+inline constexpr glz::opts JsonOpts {
+    .null_terminated       = true,
+    .error_on_unknown_keys = false,
+    .minified              = true
+};
 
 /// Single HTTP header (name, value).
-using Header  = std::pair<std::string_view, std::string_view>;
+using HttpHeader  = std::pair<std::string_view, std::string_view>;
 /// Sequence of HTTP headers.
-using Headers = std::span<const Header>;
+using HttpHeaders = std::span<const HttpHeader>;
 
-/// A high-performance HTTP/1.1-over-TLS client with:
-///  * persistent connection pooling (keep-alive)
-///  * reusable Beast buffers
-///  * minimal per-request allocations
+/// High-performance HTTP/1.1-over-TLS client:
+///  - persistent connection pooling (keep-alive)
+///  - reusable Beast buffers
+///  - minimal per-request allocations
 class Client {
 public:
-    /// Construct on given executor and SSL context.
-    Client(boost::asio::any_io_executor exec,
-           boost::asio::ssl::context& ssl_ctx);
+  /// Construct on the given executor and SSL context.
+  Client(boost::asio::any_io_executor executor,
+         boost::asio::ssl::context&   sslCtx) noexcept;
 
-    /// Perform HTTP GET and return parsed JSON.
-    [[nodiscard]]
-    boost::asio::awaitable<json> get(
-        std::string_view host,
-        std::string_view port,
-        std::string_view target,
-        Headers headers = {});
+  /// Perform HTTP GET and parse JSON.
+  [[nodiscard]]
+  boost::asio::awaitable<Result>
+  get(std::string_view host,
+      std::string_view port,
+      std::string_view target,
+      HttpHeaders      headers = {}) noexcept;
 
-    /// Perform HTTP POST with a string body and return parsed JSON.
-    [[nodiscard]]
-    boost::asio::awaitable<json> post(
-        std::string_view host,
-        std::string_view port,
-        std::string_view target,
-        std::string_view body,
-        Headers headers = {});
+  /// Perform HTTP POST with string body and parse JSON.
+  [[nodiscard]]
+  boost::asio::awaitable<Result>
+  post(std::string_view host,
+       std::string_view port,
+       std::string_view target,
+       std::string_view body,
+       HttpHeaders      headers = {}) noexcept;
 
 private:
-    struct Connection;
+  struct Connection;
 
-    boost::asio::any_io_executor                      executor_;
-    boost::asio::ssl::context&                        ssl_ctx_;
-    boost::asio::ip::tcp::resolver                    resolver_;
-    boost::asio::strand<boost::asio::any_io_executor> strand_;
+  /// Core implementation behind GET and POST.
+  [[nodiscard]]
+  boost::asio::awaitable<Result>
+  perform(boost::beast::http::verb method,
+          std::string_view       host,
+          std::string_view       port,
+          std::string_view       target,
+          std::string_view       body,
+          HttpHeaders            headers) noexcept;
 
-    // Idle connections keyed by "host:port"
-    std::unordered_map<
-        std::string,
-        std::vector<std::shared_ptr<Connection>>,
-        TransparentStringHash,
-        TransparentStringEq
-    > pool_;
+  boost::asio::any_io_executor                      executor_;
+  boost::asio::ssl::context&                        sslCtx_;
+  boost::asio::ip::tcp::resolver                    resolver_;
+  boost::asio::strand<boost::asio::any_io_executor> strand_;
 
-    // Core implementation behind both GET and POST
-    boost::asio::awaitable<json> perform(
-        boost::beast::http::verb method,
-        std::string_view host,
-        std::string_view port,
-        std::string_view target,
-        std::string_view body,
-        Headers headers);
+  // Idle connections keyed by "host:port"
+  std::unordered_map<
+    std::string,
+    std::vector<std::shared_ptr<Connection>>,
+    TransparentStringHash,
+    TransparentStringEq
+  > pool_;
 };
 
 } // namespace http_client

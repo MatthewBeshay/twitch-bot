@@ -50,8 +50,7 @@ public:
     void removeChannel(std::string_view channel) noexcept;
     bool contains(std::string_view channel) const noexcept;
     std::optional<std::string_view> getAlias(std::string_view channel) const noexcept;
-    void setAlias(std::string_view channel,
-                  std::optional<std::string> alias) noexcept;
+    void setAlias(std::string_view channel, std::optional<std::string> alias) noexcept;
     std::vector<std::string_view> channelNames() const noexcept;
 
 private:
