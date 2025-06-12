@@ -191,7 +191,7 @@ void TwitchBot::run()
 
 boost::asio::awaitable<void> TwitchBot::runBot()
 {
-    // Reuse store’s string_view list directly
+    // Reuse store's string_view list directly
     auto channels = channelStore_.channelNames();
     if (std::find(channels.begin(), channels.end(),
                   controlChannel_) == channels.end())
@@ -215,7 +215,7 @@ boost::asio::awaitable<void> TwitchBot::runBot()
         },
         boost::asio::detached);
 
-    // Read loop — format and inline dispatch
+    // Read loop - format and inline dispatch
     boost::asio::co_spawn(
         exec,
         [this]() -> boost::asio::awaitable<void>

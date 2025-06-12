@@ -12,7 +12,7 @@ namespace twitch_bot {
 struct IrcMessage {
     static constexpr std::size_t MaxParams = 16;  ///< max middle params
 
-    //–– prefix, command, parameters, trailing –––––––––––––––––––––––––––––
+    //-- prefix, command, parameters, trailing -----------------------------
     const char*   prefix      = nullptr;  ///< e.g. "nick!user@host"
     uint16_t      prefixLen   = 0;
 
@@ -28,7 +28,7 @@ struct IrcMessage {
 
     bool          isModerator = false;    ///< set if @mod=1 was present
 
-    /// Reset all fields to “empty” for reuse.
+    /// Reset all fields to "empty" for reuse.
     void clear() noexcept {
         prefix      = nullptr; prefixLen   = 0;
         command     = nullptr; commandLen  = 0;
@@ -58,7 +58,7 @@ inline IrcMessage& parseIrcLine(const char* raw,
     const char* p   = raw;
     const char* end = raw + len;
 
-    // [1] @-tags → we only care about "mod"
+    // [1] @-tags -> we only care about "mod"
     if (p < end && *p == '@') {
         ++p; // skip '@'
         while (p < end && *p != ' ') {

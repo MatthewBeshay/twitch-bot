@@ -19,8 +19,8 @@
 
 namespace twitch_bot {
 
-/// High‐level bot tying together IRC, commands, Helix and channel storage.
-/// Runs on a pool of threads for fully non‐blocking I/O.
+/// High-level bot tying together IRC, commands, Helix and channel storage.
+/// Runs on a pool of threads for fully non-blocking I/O.
 class TwitchBot {
 public:
     TwitchBot(std::string        oauthToken,

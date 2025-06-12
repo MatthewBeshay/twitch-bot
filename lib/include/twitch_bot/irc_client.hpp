@@ -33,7 +33,7 @@ public:
     IrcClient(const IrcClient&) = delete;
     IrcClient& operator=(const IrcClient&) = delete;
 
-    /// Resolve, handshake TCP→SSL→WS, authenticate and JOIN channels.
+    /// Resolve, handshake TCP->SSL->WS, authenticate and JOIN channels.
     /// @channels Span of channel names (no leading '#').
     boost::asio::awaitable<void>
     connect(std::span<const std::string_view> channels) noexcept;

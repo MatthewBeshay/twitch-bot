@@ -21,8 +21,8 @@ using ChatListener = std::function<void(std::string_view channel,
                                         std::string_view text)>;
 
 /// @brief Called when a command is seen. Runs asynchronously on the supplied executor.
-/// @param channel     Channel name (no leading ‘#’)
-/// @param user        User name (before the ‘!’ in the prefix)
+/// @param channel     Channel name (no leading '#')
+/// @param user        User name (before the '!' in the prefix)
 /// @param args        Arguments string (after the command)
 /// @param isModerator True if @mod=1 was present on the message
 using CommandHandler = std::function<boost::asio::awaitable<void>(
@@ -33,7 +33,7 @@ using CommandHandler = std::function<boost::asio::awaitable<void>(
 )>;
 
 /// @brief Dispatches PRIVMSGs to registered command handlers or chat listeners.
-///        Normal chat runs synchronously; commands (leading ‘!’) are spawned as coroutines.
+///        Normal chat runs synchronously; commands (leading '!') are spawned as coroutines.
 class CommandDispatcher {
 public:
     /// @param executor Asio executor to run command coroutines on.
@@ -43,7 +43,7 @@ public:
     CommandDispatcher& operator=(const CommandDispatcher&) = delete;
     ~CommandDispatcher() = default;
 
-    /// @brief Register a handler for “!cmd” (without the ‘!’). Must be done before dispatch().
+    /// @brief Register a handler for "!cmd" (without the '!'). Must be done before dispatch().
     void registerCommand(std::string_view cmd,
                          CommandHandler handler) noexcept;
 
@@ -54,13 +54,13 @@ public:
     void dispatch(const IrcMessage& msg) noexcept;
 
 private:
-    /// @brief Strip leading ‘#’ from a channel name.
+    /// @brief Strip leading '#' from a channel name.
     static inline std::string_view normaliseChannel(std::string_view raw) noexcept;
 
-    /// @brief Extract the user portion (before ‘!’) from the prefix.
+    /// @brief Extract the user portion (before '!') from the prefix.
     static inline std::string_view extractUser(std::string_view prefix) noexcept;
 
-    /// @brief Split text of form “!cmd args” → { "!cmd", "args" }.
+    /// @brief Split text of form "!cmd args" -> { "!cmd", "args" }.
     static inline std::pair<std::string_view, std::string_view>
     splitCommand(std::string_view text) noexcept;
 
