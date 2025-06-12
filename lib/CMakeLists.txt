@@ -23,7 +23,6 @@ add_library(TwitchBotCore
   src/helix_client.cpp
   src/http_client.cpp
   src/irc_client.cpp
-  src/message_parser.cpp
   src/twitch_bot.cpp
 )
 

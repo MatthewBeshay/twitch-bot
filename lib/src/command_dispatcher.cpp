@@ -1,60 +1,72 @@
 #include "command_dispatcher.hpp"
 
+#include <cstring>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <iostream>
-
-#include <boost/asio/use_awaitable.hpp>
 
 namespace twitch_bot {
 
-CommandDispatcher::CommandDispatcher(
-    boost::asio::any_io_executor executor) noexcept
+CommandDispatcher::CommandDispatcher(boost::asio::any_io_executor executor) noexcept
   : executor_(std::move(executor))
 {
-    // Expect a small number of commands and listeners.
     commandMap_.reserve(16);
     chatListeners_.reserve(4);
 }
 
-void CommandDispatcher::registerCommand(
-    std::string_view cmd,
-    CommandHandler handler) noexcept
+void CommandDispatcher::registerCommand(std::string_view cmd,
+                                        CommandHandler handler) noexcept
 {
-    // Store the full command (including ’!’) as the key.
+    // store command name without leading '!'
     commandMap_.emplace(std::string(cmd), std::move(handler));
 }
 
-void CommandDispatcher::registerChatListener(
-    ChatListener listener) noexcept
+void CommandDispatcher::registerChatListener(ChatListener listener) noexcept
 {
     chatListeners_.push_back(std::move(listener));
 }
 
-void CommandDispatcher::dispatch(
-    IrcMessage const& msg) noexcept
+void CommandDispatcher::dispatch(const IrcMessage& msg) noexcept
 {
-    // Only care about PRIVMSG with at least one parameter.
-    if (msg.command != "PRIVMSG" || msg.params.empty()) {
+    // only handle PRIVMSGs with at least one parameter
+    if (msg.commandLen != 7 ||
+        std::memcmp(msg.command, "PRIVMSG", 7) != 0 ||
+        msg.paramCount < 1)
+    {
         return;
     }
 
-    auto channel = normaliseChannel(msg.params[0]);
-    auto user    = extractUser(msg.prefix);
-    auto text    = msg.trailing;
+    std::string_view channel{ msg.params[0], msg.paramLens[0] };
+    channel = normaliseChannel(channel);
 
-    // If it’s a command, spawn its handler as a coroutine.
+    std::string_view user{ msg.prefix, msg.prefixLen };
+    user = extractUser(user);
+
+    std::string_view text{ msg.trailing, msg.trailingLen };
+
     if (!text.empty() && text.front() == '!') {
-        auto [cmd, args] = splitCommand(text);
-        auto it = commandMap_.find(cmd);
+        // split "!cmd args" into fullCmd and args
+        auto [fullCmd, args] = splitCommand(text);
+        std::string_view cmdName = fullCmd.substr(1);  // drop '!'
+
+        auto it = commandMap_.find(cmdName);
         if (it != commandMap_.end()) {
             auto handler = it->second;
+            bool isModerator = msg.isModerator;
+
             boost::asio::co_spawn(
                 executor_,
-                [=]() -> boost::asio::awaitable<void> {
+                // capture cmdName explicitly!
+                [handler, channel, user, args, isModerator, cmdName]()
+                -> boost::asio::awaitable<void>
+                {
                     try {
-                        co_await handler(channel, user, args, msg.tags);
-                    } catch (std::exception const& e) {
+                        co_await handler(channel, user, args, isModerator);
+                    }
+                    catch (const std::exception& e) {
                         std::cerr << "[CommandDispatcher] handler for '"
-                                  << cmd << "' threw: " << e.what() << '\n';
+                            << cmdName << "' threw: "
+                            << e.what() << '\n';
                     }
                 },
                 boost::asio::detached);
@@ -62,8 +74,8 @@ void CommandDispatcher::dispatch(
         }
     }
 
-    // Not a recognised command – invoke all chat listeners synchronously.
-    for (auto const& listener : chatListeners_) {
+    // fallback: normal chat listeners
+    for (auto& listener : chatListeners_) {
         listener(channel, user, text);
     }
 }
@@ -71,36 +83,28 @@ void CommandDispatcher::dispatch(
 std::string_view CommandDispatcher::normaliseChannel(
     std::string_view raw) noexcept
 {
-    // Remove Twitch IRC ’#’ prefix if present.
-    if (!raw.empty() && raw.front() == '#') {
-        return raw.substr(1);
-    }
-    return raw;
+    return (!raw.empty() && raw.front() == '#')
+         ? raw.substr(1)
+         : raw;
 }
 
 std::string_view CommandDispatcher::extractUser(
     std::string_view prefix) noexcept
 {
-    if (prefix.empty()) {
-        return prefix;
-    }
-    // Prefix format is ’user!ident@host’
     auto pos = prefix.find('!');
-    if (pos != std::string_view::npos) {
-        return prefix.substr(0, pos);
-    }
-    return prefix;
+    return (pos != std::string_view::npos)
+         ? prefix.substr(0, pos)
+         : prefix;
 }
 
-std::pair<std::string_view, std::string_view> CommandDispatcher::splitCommand(
-    std::string_view text) noexcept
+std::pair<std::string_view, std::string_view>
+CommandDispatcher::splitCommand(std::string_view text) noexcept
 {
-    // Split at first space: "!cmd args..."
     auto pos = text.find(' ');
-    if (pos != std::string_view::npos) {
-        return { text.substr(0, pos), text.substr(pos + 1) };
+    if (pos == std::string_view::npos) {
+        return { text, std::string_view{} };
     }
-    return { text, std::string_view{} };
+    return { text.substr(0, pos), text.substr(pos + 1) };
 }
 
 } // namespace twitch_bot

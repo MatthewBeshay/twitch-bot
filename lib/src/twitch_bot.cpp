@@ -44,23 +44,19 @@ TwitchBot::TwitchBot(std::string oauthToken,
     channelStore_.load();
 
     // !join handler
-    dispatcher_.registerCommand("!join",
+    dispatcher_.registerCommand(
+        "join",
         [this](std::string_view channel,
-               std::string_view user,
-               std::string_view args,
-               const TagList& tags) -> boost::asio::awaitable<void>
+            std::string_view user,
+            std::string_view args,
+            bool isModerator) -> boost::asio::awaitable<void>
         {
             // 1) Only react in our control channel
             if (channel != controlChannel_)
                 co_return;
 
             // 2) Only the broadcaster or a moderator may join arbitrary channels
-            const bool isBroadcaster = (user == channel);
-            const bool isModerator   = std::any_of(
-                tags.begin(), tags.end(),
-                [](auto const& kv){
-                    return kv.first == "mod" && kv.second == "1";
-                });
+            bool isBroadcaster = (user == channel);
             if (!args.empty() && !isBroadcaster && !isModerator)
                 co_return;
 
@@ -69,13 +65,12 @@ TwitchBot::TwitchBot(std::string oauthToken,
 
             // 4) Already in store?
             if (channelStore_.contains(target)) {
-                // Notify “already in channel”
                 std::string msg;
                 msg.reserve(11 + controlChannel_.size() + 21 + target.size());
                 msg.append("PRIVMSG #")
-                   .append(controlChannel_)
-                   .append(" :Already in channel ")
-                   .append(target);
+                    .append(controlChannel_)
+                    .append(" :Already in channel ")
+                    .append(target);
                 co_await ircClient_.sendLine(msg);
                 co_return;
             }
@@ -85,45 +80,41 @@ TwitchBot::TwitchBot(std::string oauthToken,
             channelStore_.save();
 
             // 6) JOIN with zero heap allocations
-            std::array<boost::asio::const_buffer, 3> joinCmd{{
+            std::array<boost::asio::const_buffer, 3> joinCmd{ {
                 boost::asio::buffer("JOIN #", 6),
                 boost::asio::buffer(target),
                 boost::asio::buffer("\r\n", 2)
-            }};
+            } };
             co_await ircClient_.sendBuffers(joinCmd);
 
             // 7) Acknowledge the join in control channel
             std::string ack;
             ack.reserve(12 + controlChannel_.size()
-                        + 3 + user.size()
-                        + 8 + target.size());
+                + 3 + user.size()
+                + 8 + target.size());
             ack.append("PRIVMSG #")
-               .append(controlChannel_)
-               .append(" :@")
-               .append(user)
-               .append(" Joined ")
-               .append(target);
+                .append(controlChannel_)
+                .append(" :@")
+                .append(user)
+                .append(" Joined ")
+                .append(target);
             co_await ircClient_.sendLine(ack);
         });
 
     // !leave handler
-    dispatcher_.registerCommand("!leave",
+    dispatcher_.registerCommand(
+        "leave",
         [this](std::string_view channel,
-               std::string_view user,
-               std::string_view args,
-               const TagList& tags) -> boost::asio::awaitable<void>
+            std::string_view user,
+            std::string_view args,
+            bool isModerator) -> boost::asio::awaitable<void>
         {
-            // 1) Only in the control channel
+            // 1) Only react in our control channel
             if (channel != controlChannel_)
                 co_return;
 
             // 2) Only the broadcaster or a moderator may remove arbitrary channels
-            const bool isBroadcaster = (user == channel);
-            const bool isModerator   = std::any_of(
-                tags.begin(), tags.end(),
-                [](auto const& kv){
-                    return kv.first == "mod" && kv.second == "1";
-                });
+            bool isBroadcaster = (user == channel);
             if (!args.empty() && !isBroadcaster && !isModerator)
                 co_return;
 
@@ -135,9 +126,9 @@ TwitchBot::TwitchBot(std::string oauthToken,
                 std::string msg;
                 msg.reserve(11 + controlChannel_.size() + 17 + target.size());
                 msg.append("PRIVMSG #")
-                   .append(controlChannel_)
-                   .append(" :Not in channel ")
-                   .append(target);
+                    .append(controlChannel_)
+                    .append(" :Not in channel ")
+                    .append(target);
                 co_await ircClient_.sendLine(msg);
                 co_return;
             }
@@ -146,25 +137,25 @@ TwitchBot::TwitchBot(std::string oauthToken,
             channelStore_.removeChannel(target);
             channelStore_.save();
 
-            // 6) Send PART with zero heap allocations
-            std::array<boost::asio::const_buffer, 3> partCmd{{
+            // 6) PART with zero heap allocations
+            std::array<boost::asio::const_buffer, 3> partCmd{ {
                 boost::asio::buffer("PART #", 6),
                 boost::asio::buffer(target),
                 boost::asio::buffer("\r\n", 2)
-            }};
+            } };
             co_await ircClient_.sendBuffers(partCmd);
 
-            // 7) Acknowledge the action
+            // 7) Acknowledge the leave
             std::string ack;
             ack.reserve(12 + controlChannel_.size()
-                        + 3 + user.size()
-                        + 6 + target.size());
+                + 3 + user.size()
+                + 6 + target.size());
             ack.append("PRIVMSG #")
-               .append(controlChannel_)
-               .append(" :@")
-               .append(user)
-               .append(" Left ")
-               .append(target);
+                .append(controlChannel_)
+                .append(" :@")
+                .append(user)
+                .append(" Left ")
+                .append(target);
             co_await ircClient_.sendLine(ack);
         });
 }
@@ -225,7 +216,8 @@ boost::asio::awaitable<void> TwitchBot::runBot()
         boost::asio::detached);
 
     // Read loop — format and inline dispatch
-    boost::asio::co_spawn(exec,
+    boost::asio::co_spawn(
+        exec,
         [this]() -> boost::asio::awaitable<void>
         {
             co_await ircClient_.readLoop(
@@ -233,7 +225,11 @@ boost::asio::awaitable<void> TwitchBot::runBot()
                 {
                     std::cout << "[IRC] " << raw_line << '\n';
                     twitch_bot::IrcMessage msg;
-                    parseIrcLine(raw_line, msg);
+                    // call the header-only parser
+                    parseIrcLine(raw_line.data(),
+                        raw_line.size(),
+                        msg);
+
                     dispatcher_.dispatch(msg);
                 });
         },

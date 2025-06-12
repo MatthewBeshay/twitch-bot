@@ -1,3 +1,4 @@
+// command_dispatcher.hpp
 #pragma once
 
 #include "message_parser.hpp"
@@ -10,58 +11,58 @@
 #include <unordered_map>
 
 #include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
 
 namespace twitch_bot {
 
-/// Invoked on every PRIVMSG (channel, user, text).
+/// @brief Called on every PRIVMSG (channel, user, text).
 using ChatListener = std::function<void(std::string_view channel,
                                         std::string_view user,
                                         std::string_view text)>;
 
-/// Invoked when a command is seen. Runs asynchronously on the supplied executor.
-/// Parameters: channel, user, args, tags.
+/// @brief Called when a command is seen. Runs asynchronously on the supplied executor.
+/// @param channel     Channel name (no leading ‚Äò#‚Äô)
+/// @param user        User name (before the ‚Äò!‚Äô in the prefix)
+/// @param args        Arguments string (after the command)
+/// @param isModerator True if @mod=1 was present on the message
 using CommandHandler = std::function<boost::asio::awaitable<void>(
     std::string_view,
     std::string_view,
     std::string_view,
-    TagList const&)>;
+    bool
+)>;
 
-/// Dispatches PRIVMSGs to either registered command handlers or chat listeners.
-/// Uses a purely synchronous path for normal chat to avoid coroutine-frame overhead.
-/// Commands (leading í!í) are spawned as coroutines on the given executor.
+/// @brief Dispatches PRIVMSGs to registered command handlers or chat listeners.
+///        Normal chat runs synchronously; commands (leading ‚Äò!‚Äô) are spawned as coroutines.
 class CommandDispatcher {
 public:
-    /// @param executor  Asio executor used to run command coroutines.
+    /// @param executor Asio executor to run command coroutines on.
     explicit CommandDispatcher(boost::asio::any_io_executor executor) noexcept;
 
-    ~CommandDispatcher() = default;
     CommandDispatcher(const CommandDispatcher&) = delete;
     CommandDispatcher& operator=(const CommandDispatcher&) = delete;
+    ~CommandDispatcher() = default;
 
-    /// Register a handler for a command (e.g. í!fooí). Must be done before dispatch.
+    /// @brief Register a handler for ‚Äú!cmd‚Äù (without the ‚Äò!‚Äô). Must be done before dispatch().
     void registerCommand(std::string_view cmd,
                          CommandHandler handler) noexcept;
 
-    /// Register a fallback listener for non-command chat.
+    /// @brief Register a fallback listener for non-command chat messages.
     void registerChatListener(ChatListener listener) noexcept;
 
-    /// Dispatch a parsed IRC message. Returns immediately.
-    void dispatch(IrcMessage const& msg) noexcept;
+    /// @brief Dispatch a parsed IRC message. Returns immediately.
+    void dispatch(const IrcMessage& msg) noexcept;
 
 private:
-    /// Remove leading í#í from a channel name.
-    static inline std::string_view normaliseChannel(
-        std::string_view raw) noexcept;
+    /// @brief Strip leading ‚Äò#‚Äô from a channel name.
+    static inline std::string_view normaliseChannel(std::string_view raw) noexcept;
 
-    /// Extract the user portion before the í!í in the prefix.
-    static inline std::string_view extractUser(
-        std::string_view prefix) noexcept;
+    /// @brief Extract the user portion (before ‚Äò!‚Äô) from the prefix.
+    static inline std::string_view extractUser(std::string_view prefix) noexcept;
 
-    /// Split text of form í!cmd argsÖí into { "!cmd", "argsÖ" }.
-    static inline std::pair<std::string_view, std::string_view> splitCommand(
-        std::string_view text) noexcept;
+    /// @brief Split text of form ‚Äú!cmd args‚Äù ‚Üí { "!cmd", "args" }.
+    static inline std::pair<std::string_view, std::string_view>
+    splitCommand(std::string_view text) noexcept;
 
     boost::asio::any_io_executor executor_;
     std::unordered_map<std::string,
