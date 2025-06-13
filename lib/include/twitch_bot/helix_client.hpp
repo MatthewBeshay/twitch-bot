@@ -1,6 +1,7 @@
 #pragma once
 
 #include "http_client.hpp"
+#include "utils/attributes.hpp"
 
 #include <chrono>
 #include <optional>
@@ -8,69 +9,68 @@
 #include <string>
 #include <string_view>
 
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/ssl/context.hpp>
+
+
 namespace twitch_bot {
 
-/// JSON value returned by Helix client.
-using Json = glz::json_t;
+/// JSON from Helix API.
+using json = glz::json_t;
 
-/// Represents the `/helix/streams` response (first-element) when live.
-struct StreamStartResult {
-    bool                      is_live;    ///< True if the channel is live.
-    std::chrono::milliseconds started_at; ///< Time (ms since UNIX epoch) when stream went live.
+/// Data returned when channel goes live.
+struct stream_start_result
+{
+    bool                      is_live;    ///< true if channel is live
+    std::chrono::milliseconds start_time; ///< ms since UNIX epoch when live
 };
 
-/// Minimal Helix OAuth + Streams client.
-/// Thread-safe for concurrent calls; reuses pooled HTTP/TLS connections.
-class HelixClient {
+/// OAuth2 + streams client for Twitch Helix.
+/// Thread-safe; reuses pooled HTTP/TLS connections.
+class HelixClient
+{
 public:
-    /**
-     * @brief Construct a HelixClient.
-     * @param executor      Asio executor for all async operations.
-     * @param ssl_ctx       SSL context for HTTPS handshakes.
-     * @param client_id     Twitch application client ID.
-     * @param client_secret Twitch application client secret.
-     */
+    /// Construct client.
     HelixClient(boost::asio::any_io_executor executor,
-                boost::asio::ssl::context&   ssl_ctx,
-                std::string_view             client_id,
-                std::string_view             client_secret) noexcept;
+                 boost::asio::ssl::context&   ssl_ctx,
+                 std::string_view             client_id,
+                 std::string_view             client_secret) noexcept;
 
     HelixClient(const HelixClient&)            = delete;
     HelixClient& operator=(const HelixClient&) = delete;
-    ~HelixClient()                             = default;
+    ~HelixClient()                              = default;
 
-    /**
-     * @brief Ensure a valid OAuth token is cached (refresh if missing/expired).
-     * @note Thread-safe. On any failure, the cached token is cleared.
-     */
-    boost::asio::awaitable<void> ensureToken() noexcept;
+    /// Ensure valid OAuth2 token.
+    boost::asio::awaitable<void>
+    ensure_token() noexcept;
 
-    /**
-     * @brief Query the Helix Streams API for a channel's start time.
-     * @param channel Name of the Twitch channel to query.
-     * @return std::optional<StreamStartResult>
-     *         - nullopt if offline or on any error.
-     */
-    boost::asio::awaitable<std::optional<StreamStartResult>>
-    getStreamStart(std::string_view channel) noexcept;
+    /// Get stream start for given channel.
+    boost::asio::awaitable<std::optional<stream_start_result>>
+    get_stream_start(std::string_view channel_id) noexcept;
 
 private:
-    /**
-     * @brief Parse a fixed-format ISO-8601 UTC timestamp into milliseconds since epoch.
-     * @param ts  Must be exactly "YYYY-MM-DDThh:mm:ssZ".
-     * @return milliseconds since UNIX epoch, or nullopt on malformed input.
-     */
-    static std::optional<std::chrono::milliseconds>
-    parseIso8601Ms(std::string_view ts) noexcept;
+    /// Parse ISO-8601 "YYYY-MM-DDThh:mm:ssZ" to ms since epoch.
+    TB_FORCE_INLINE static 
+    std::optional<std::chrono::milliseconds>
+    parse_iso8601_ms(std::string_view timestamp) noexcept;
 
-    boost::asio::any_io_executor           executor_;
-    http_client::Client                    http_;          ///< Reusable HTTP+TLS client.
-    const std::string                      client_id_;
-    const std::string                      client_secret_;
+    // Prebuilt buffers
+    std::string token_body_;
+    std::string target_path_;
+    std::string auth_header_;
 
-    mutable std::shared_mutex              token_mutex_;   ///< Guards token / expiry.
-    std::string                            helix_token_;   ///< OAuth bearer token.
-    std::chrono::steady_clock::time_point  helix_expiry_;  ///< When token expires.
+    // Asio executor and HTTP client
+    boost::asio::any_io_executor executor_;
+    http_client::client          http_client_;
+
+    // Application credentials
+    const std::string client_id_;
+    const std::string client_secret_;
+
+    mutable std::shared_mutex       token_mutex_;
+    std::string                     token_;
+    std::chrono::steady_clock::time_point token_expiry_;
 };
 
-} // namespace twitch_bot
+}   // namespace twitch_bot

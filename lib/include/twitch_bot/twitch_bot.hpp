@@ -5,59 +5,64 @@
 #include "helix_client.hpp"
 #include "channel_store.hpp"
 
-#include <string>
-#include <string_view>
-#include <vector>
-#include <span>
-#include <memory>
-#include <thread>
 #include <algorithm>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/ssl/context.hpp>
 
 namespace twitch_bot {
 
 /// High-level bot tying together IRC, commands, Helix and channel storage.
-/// Runs on a pool of threads for fully non-blocking I/O.
-class TwitchBot {
+/// Runs all I/O on a single strand with a pool of threads.
+class TwitchBot
+{
 public:
-    TwitchBot(std::string        oauthToken,
-              std::string        clientId,
-              std::string        clientSecret,
-              std::string        controlChannel,
-              std::size_t        threads = std::thread::hardware_concurrency());
+    /// @pre oauth_token, client_id, client_secret and control_channel are non-empty.
+    explicit TwitchBot(std::string        oauth_token,
+                       std::string        client_id,
+                       std::string        client_secret,
+                       std::string        control_channel,
+                       std::size_t        threads = std::thread::hardware_concurrency());
 
     ~TwitchBot() noexcept;
 
-    TwitchBot(const TwitchBot&) = delete;
+    TwitchBot(const TwitchBot&)            = delete;
     TwitchBot& operator=(const TwitchBot&) = delete;
 
     /// Start the bot and block until stopped.
     void run();
 
-    /// Register a listener for every non-command chat message.
-    void addChatListener(ChatListener cb);
+    /// Add a callback for every non-command chat message.
+    void add_chat_listener(ChatListener listener);
 
 private:
-    boost::asio::awaitable<void> runBot();
+    boost::asio::awaitable<void> run_bot() noexcept;
 
-    boost::asio::io_context      ioc_;
-    boost::asio::ssl::context    ssl_ctx_;
-    const std::string            controlChannel_;
+    static constexpr std::string_view CRLF{"\r\n"};
 
-    IrcClient             ircClient_;
-    CommandDispatcher     dispatcher_;
-    HelixClient           helixClient_;
-    ChannelStore          channelStore_;
+    boost::asio::io_context         ioc_;
+    boost::asio::strand<
+      boost::asio::any_io_executor> strand_;
+    boost::asio::ssl::context       ssl_ctx_;
 
-    const std::size_t     threadCount_;
-    std::vector<std::thread> threads_;
+    const std::string               oauth_token_;
+    const std::string               client_id_;
+    const std::string               client_secret_;
+    const std::string               control_channel_;
 
-    const std::string     oauthToken_;
-    const std::string     clientId_;
-    const std::string     clientSecret_;
+    IrcClient                       irc_client_;
+    CommandDispatcher               dispatcher_;
+    HelixClient                     helix_client_;
+    ChannelStore                    channel_store_;
+
+    const std::size_t               thread_count_;
+    std::vector<std::thread>        threads_;
 };
 
 } // namespace twitch_bot

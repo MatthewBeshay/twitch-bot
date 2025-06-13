@@ -1,164 +1,168 @@
 ﻿#include "irc_client.hpp"
 
-#include <array>
 #include <iostream>
 
+#include <boost/asio/connect.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/connect.hpp>
-#include <boost/asio/this_coro.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/strand.hpp>
-#include <boost/asio/co_spawn.hpp>
 
-#include <boost/beast/websocket/stream.hpp>
-#include <boost/beast/websocket/ssl.hpp>
-#include <boost/beast/core/role.hpp>
-#include <boost/beast/core.hpp>
-#include <boost/beast/ssl.hpp>
-#include <boost/beast/websocket.hpp>
+#include <boost/system/error_code.hpp>
 
 #include <openssl/ssl.h>
 
 namespace twitch_bot {
 
-    using boost::asio::use_awaitable;
-    using boost::asio::buffer;
-    using boost::asio::const_buffer;
-    using boost::beast::websocket::close_code;
-    using error_code = boost::system::error_code;
+using boost::asio::buffer;
+using boost::asio::const_buffer;
+using boost::asio::use_awaitable;
+using error_code = boost::system::error_code;
 
-    IrcClient::IrcClient(boost::asio::any_io_executor exec,
-        boost::asio::ssl::context& ssl_ctx,
-        std::string_view              oauth_token,
-        std::string_view              nickname) noexcept
-        : ws_{ boost::asio::make_strand(exec), ssl_ctx }
-        , ping_timer_{ exec }
-        , read_buffer_()
-        , oauth_token_{ oauth_token }
-        , nickname_{ nickname }
-    {
-    }
+IrcClient::IrcClient(boost::asio::any_io_executor executor,
+                     boost::asio::ssl::context&     ssl_context,
+                     std::string_view               oauth_token,
+                     std::string_view               nickname) noexcept
+    : ws_stream_{boost::asio::make_strand(executor), ssl_context}
+    , ping_timer_{executor}
+    , read_buffer_{}
+    , oauth_token_{oauth_token}
+    , nickname_{nickname}
+{
+}
 
+boost::asio::awaitable<void>
+IrcClient::connect(std::span<const std::string_view> channels) noexcept
+{
+    static constexpr char host_name[] = "irc-ws.chat.twitch.tv";
+    static constexpr char port_str[]  = "443";
 
-    boost::asio::awaitable<void> IrcClient::connect(
-        std::span<const std::string_view> channels) noexcept
-    {
-        constexpr char host[] = "irc-ws.chat.twitch.tv";
-        constexpr char port[] = "443";
+    // Resolve and connect TCP
+    auto executor = co_await boost::asio::this_coro::executor;
+    boost::asio::ip::tcp::resolver resolver{executor};
+    auto endpoints = co_await resolver.async_resolve(
+        host_name, port_str, use_awaitable);
+    co_await boost::asio::async_connect(
+        boost::beast::get_lowest_layer(ws_stream_),
+        endpoints,
+        use_awaitable);
 
-        // 1) DNS + TCP
-        auto exec = co_await boost::asio::this_coro::executor;
-        boost::asio::ip::tcp::resolver res(exec);
-        auto eps = co_await res.async_resolve(host, port, use_awaitable);
-        co_await boost::asio::async_connect(
-            boost::beast::get_lowest_layer(ws_), eps, use_awaitable);
+    // Perform TLS handshake and set SNI
+    SSL_set_tlsext_host_name(
+        ws_stream_.next_layer().native_handle(),
+        host_name);
+    co_await ws_stream_.next_layer().async_handshake(
+        boost::asio::ssl::stream_base::client,
+        use_awaitable);
 
-        // 2) TLS handshake + SNI
-        SSL_set_tlsext_host_name(
-            ws_.next_layer().native_handle(), host);
-        co_await ws_.next_layer().async_handshake(
-            boost::asio::ssl::stream_base::client, use_awaitable);
-
-        // 3) WebSocket handshake
-        ws_.set_option(boost::beast::websocket::stream_base::timeout::
-            suggested(boost::beast::role_type::client));
-        ws_.set_option(boost::beast::websocket::stream_base::decorator(
-            [](boost::beast::websocket::request_type& req) {
-                req.set(boost::beast::http::field::user_agent,
+    // Perform WebSocket handshake
+    ws_stream_.set_option(
+        boost::beast::websocket::stream_base::timeout::
+        suggested(boost::beast::role_type::client));
+    ws_stream_.set_option(
+        boost::beast::websocket::stream_base::decorator(
+        [](boost::beast::websocket::request_type& req)
+        {
+            req.set(boost::beast::http::field::user_agent,
                     "TwitchBot");
-            }));
-        co_await ws_.async_handshake(host, "/", use_awaitable);
+        }));
+    co_await ws_stream_.async_handshake(
+        host_name, "/", use_awaitable);
 
-        // 4) Authenticate
+    // Authenticate
+    {
+        std::array<const_buffer, 2> bufs{
+            buffer("PASS ", 5),
+            buffer(oauth_token_)
+        };
+        co_await send_buffers(bufs);
+    }
+    {
+        std::array<const_buffer, 2> bufs{
+            buffer("NICK ", 5),
+            buffer(nickname_)
+        };
+        co_await send_buffers(bufs);
+    }
+
+    // Request tags, commands and membership
+    {
+        static constexpr char caps[] =
+            "CAP REQ :twitch.tv/membership "
+            "twitch.tv/tags twitch.tv/commands\r\n";
+        std::array<const_buffer, 1> bufs{
+            buffer(caps, sizeof(caps) - 1)
+        };
+        co_await send_buffers(bufs);
+    }
+
+    // Join channels
+    for (auto channel : channels)
+    {
+        std::array<const_buffer, 5> bufs{
+            buffer("JOIN", 4),
+            buffer(" ", 1),
+            buffer("#", 1),
+            buffer(channel),
+            buffer(k_crlf.data(), k_crlf.size())
+        };
+        co_await send_buffers(bufs);
+    }
+}
+
+boost::asio::awaitable<void>
+IrcClient::send_line(std::string_view message) noexcept
+{
+    std::array<const_buffer, 2> bufs{
+        buffer(message.data(), message.size()),
+        buffer(k_crlf.data(), k_crlf.size())
+    };
+    co_await send_buffers(bufs);
+}
+
+boost::asio::awaitable<void>
+IrcClient::send_buffers(
+    std::span<const boost::asio::const_buffer> buffers) noexcept
+{
+    try
+    {
+        ws_stream_.text(true);
+        co_await ws_stream_.async_write(buffers, use_awaitable);
+    }
+    catch (...)
+    {
+        // ignore errors
+    }
+}
+
+boost::asio::awaitable<void, boost::asio::any_io_executor>
+IrcClient::ping_loop() noexcept
+{
+    for (;;)
+    {
+        ping_timer_.expires_after(std::chrono::minutes{4});
+        co_await ping_timer_.async_wait(use_awaitable);
+        co_await send_line("PING :tmi.twitch.tv");
+    }
+}
+
+void IrcClient::close() noexcept
+{
+    // Stop ping loop
+    ping_timer_.cancel();
+
+    // Close WebSocket and TLS
+    boost::asio::post(ws_stream_.get_executor(),
+        [this]()
         {
-            std::array<const_buffer, 2> bufs{ {
-                buffer("PASS ",5),
-                buffer(oauth_token_)
-            } };
-            co_await sendBuffers(bufs);
-        }
-        {
-            std::array<const_buffer, 2> bufs{ {
-                buffer("NICK ",5),
-                buffer(nickname_)
-            } };
-            co_await sendBuffers(bufs);
-        }
-
-        // 5) Request tags+commands+membership
-        {
-            static constexpr char cap[] =
-                "CAP REQ :twitch.tv/membership "
-                "twitch.tv/tags twitch.tv/commands\r\n";
-            std::array<const_buffer, 1> bufs{ { buffer(cap) } };
-            co_await sendBuffers(bufs);
-        }
-
-        // 6) JOIN each channel (zero-alloc)
-        for (auto ch : channels) {
-            std::array<const_buffer, 5> bufs{ {
-                buffer("JOIN",4),
-                buffer(" ",1),
-                buffer("#",1),
-                buffer(ch),
-                buffer(CRLF_,2)
-            } };
-            co_await sendBuffers(bufs);
-        }
-    }
-
-
-    boost::asio::awaitable<void> IrcClient::sendLine(
-        std::string_view msg) noexcept
-    {
-        // build two-buffer array then delegate
-        std::array<const_buffer, 2> bufs{ {
-            buffer(msg),
-            buffer(CRLF_,2)
-        } };
-        co_await sendBuffers(bufs);
-    }
-
-
-    boost::asio::awaitable<void> IrcClient::sendBuffers(
-        std::span<const const_buffer> bufs) noexcept
-    {
-        try {
-            ws_.text(true);
-            co_await ws_.async_write(bufs, use_awaitable);
-        }
-        catch (...) {
-            // swallow all errors, keep bot running
-        }
-    }
-
-
-    boost::asio::awaitable<void> IrcClient::pingLoop() noexcept
-    {
-        for (;;) {
-            ping_timer_.expires_after(std::chrono::minutes(4));
-            co_await ping_timer_.async_wait(use_awaitable);
-            co_await sendLine("PING :tmi.twitch.tv");
-        }
-    }
-
-
-    void IrcClient::close() noexcept
-    {
-        // stop ping loop
-        ping_timer_.cancel();
-
-        // async-close WS + SSL on our strand
-        auto ex = ws_.get_executor();
-        boost::asio::post(ex, [this]() {
-            // 1) WebSocket close
-            ws_.async_close(close_code::normal,
-                [](error_code) {});
-            // 2) SSL shutdown
-            ws_.next_layer().async_shutdown(
-                [](error_code) {});
-            });
-    }
+            ws_stream_.async_close(
+                boost::beast::websocket::close_code::normal,
+                [](error_code){});
+            ws_stream_.next_layer().async_shutdown(
+                [](error_code){});
+        });
+}
 
 } // namespace twitch_bot

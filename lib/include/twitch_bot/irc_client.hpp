@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "utils/attributes.hpp"
+
 #include <array>
 #include <span>
 #include <string>
@@ -7,78 +9,82 @@
 
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/stream.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/buffer.hpp>
 
 #include <boost/beast/core/flat_buffer.hpp>
+#include <boost/beast/core/static_buffer.hpp>
 #include <boost/beast/websocket/ssl.hpp>
 #include <boost/beast/websocket/stream.hpp>
 
 namespace twitch_bot {
 
-/// IRC client over WSS. All methods are async and non-blocking.
-class IrcClient {
+/// IRC client over secure WebSocket.
+class IrcClient
+{
 public:
-    /// Construct with executor, TLS context, OAuth token and nick.
-    IrcClient(boost::asio::any_io_executor exec,
-              boost::asio::ssl::context&    ssl_ctx,
-              std::string_view              oauth_token,
-              std::string_view              nickname) noexcept;
+    /// Prepare client with executor, TLS context and credentials.
+    IrcClient(boost::asio::any_io_executor executor,
+              boost::asio::ssl::context&     ssl_context,
+              std::string_view               oauth_token,
+              std::string_view               nickname) noexcept;
 
     ~IrcClient() = default;
+
     IrcClient(const IrcClient&) = delete;
     IrcClient& operator=(const IrcClient&) = delete;
 
-    /// Resolve, handshake TCP->SSL->WS, authenticate and JOIN channels.
-    /// @channels Span of channel names (no leading '#').
+    /// Open connection, authenticate and join channels.
     boost::asio::awaitable<void>
     connect(std::span<const std::string_view> channels) noexcept;
 
-    /// Send one IRC line (msg + CRLF) with zero heap alloc.
+    /// Append CRLF and send an IRC message.
     boost::asio::awaitable<void>
-    sendLine(std::string_view msg) noexcept;
+    send_line(std::string_view message) noexcept;
 
-    /// Send raw buffers (zero alloc) on the WebSocket.
+    /// Send raw buffers without heap allocation.
     boost::asio::awaitable<void>
-    sendBuffers(std::span<const boost::asio::const_buffer> bufs) noexcept;
+    send_buffers(std::span<const boost::asio::const_buffer> buffers) noexcept;
 
-    /// Read frames, split on CRLF, invoke callback per line.
-    template<class F>
+    /// Read frames, split on CRLF, and invoke handler for each line.
+    template <typename Handler>
     boost::asio::awaitable<void>
-    readLoop(F&& callback) noexcept;
+    read_loop(Handler&& handler) noexcept;
 
-    /// Send a PING every 4 minutes until close() is called.
-    boost::asio::awaitable<void>
-    pingLoop() noexcept;
+    /// Periodic PING every four minutes until closed.
+    boost::asio::awaitable<void, boost::asio::any_io_executor>
+    ping_loop() noexcept;
 
-    /// Cancel ping timer and initiate non-blocking WS+SSL close.
+    /// Stop ping timer and close connection gracefully.
     void close() noexcept;
 
 private:
-    using tcp_socket_t = boost::asio::ip::tcp::socket;
-    using ssl_stream_t = boost::asio::ssl::stream<tcp_socket_t>;
-    using ws_stream_t  = boost::beast::websocket::stream<ssl_stream_t>;
+    static constexpr std::size_t     k_read_buffer_size = 8 * 1024;
+    static constexpr std::string_view k_crlf            = "\r\n";
 
-    ws_stream_t               ws_;           // WebSocket-over-SSL stream
-    boost::asio::steady_timer ping_timer_;
-    boost::beast::flat_buffer read_buffer_;
+    using tcp_socket_type       = boost::asio::ip::tcp::socket;
+    using ssl_stream_type       = boost::asio::ssl::stream<tcp_socket_type>;
+    using websocket_stream_type = boost::beast::websocket::stream<ssl_stream_type>;
 
-    std::string oauth_token_;
-    std::string nickname_;
-
-    static inline constexpr char CRLF_[3] = "\r\n";
+    websocket_stream_type                   ws_stream_;
+    boost::asio::steady_timer               ping_timer_;
+    boost::beast::flat_static_buffer<k_read_buffer_size> read_buffer_;
+    std::string                             oauth_token_;
+    std::string                             nickname_;
 };
 
-template<class F>
+template <typename Handler>
 boost::asio::awaitable<void>
-IrcClient::readLoop(F&& callback) noexcept
+IrcClient::read_loop(Handler&& handler) noexcept
 {
-    for (;;) {
-        co_await ws_.async_read(read_buffer_, boost::asio::use_awaitable);
+    for (;;)
+    {
+        co_await ws_stream_.async_read(read_buffer_,
+                                       boost::asio::use_awaitable);
 
         auto data = read_buffer_.data();
         std::string_view chunk{
@@ -88,20 +94,21 @@ IrcClient::readLoop(F&& callback) noexcept
         read_buffer_.consume(data.size());
 
         std::size_t pos = 0;
-        while (pos < chunk.size()) {
-            auto next = chunk.find(CRLF_, pos);
-            std::string_view line = chunk.substr(
-                pos,
+        while (pos < chunk.size())
+        {
+            auto next = chunk.find(k_crlf, pos);
+            std::string_view line{
+                chunk.data() + pos,
                 next == std::string_view::npos
                   ? chunk.size() - pos
                   : next - pos
-            );
-            pos = (next == std::string_view::npos)
-                ? chunk.size()
-                : next + 2;
-            if (!line.empty()) {
-                callback(line);
-            }
+            };
+            pos = next == std::string_view::npos
+                  ? chunk.size()
+                  : next + k_crlf.size();
+
+            if (!line.empty())
+                handler(line);
         }
     }
 }

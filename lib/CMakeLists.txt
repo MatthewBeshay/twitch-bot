@@ -50,7 +50,7 @@ source_group(
 # -- Public include directories for consumers of TwitchBotCore -----------------
 #    1) lib/include/twitch_bot
 #    2) lib/include
-#    3) build/generated (for config_path.hpp)
+#    3) build/generated
 target_include_directories(TwitchBotCore
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/twitch_bot>

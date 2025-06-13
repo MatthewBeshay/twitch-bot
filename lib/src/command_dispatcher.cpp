@@ -1,72 +1,67 @@
 #include "command_dispatcher.hpp"
 
-#include <cstring>
+#include <iostream>
+
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <iostream>
 
 namespace twitch_bot {
 
 CommandDispatcher::CommandDispatcher(boost::asio::any_io_executor executor) noexcept
   : executor_(std::move(executor))
 {
-    commandMap_.reserve(16);
-    chatListeners_.reserve(4);
+    commands_.reserve(16);
+    chat_listeners_.reserve(4);
 }
 
-void CommandDispatcher::registerCommand(std::string_view cmd,
-                                        CommandHandler handler) noexcept
+void CommandDispatcher::registerCommand(std::string_view command,
+                                        CommandHandler  handler) noexcept
 {
-    // store command name without leading '!'
-    commandMap_.emplace(std::string(cmd), std::move(handler));
+    commands_.emplace(std::string{command}, std::move(handler));
 }
 
 void CommandDispatcher::registerChatListener(ChatListener listener) noexcept
 {
-    chatListeners_.push_back(std::move(listener));
+    chat_listeners_.push_back(std::move(listener));
 }
 
-void CommandDispatcher::dispatch(const IrcMessage& msg) noexcept
+void CommandDispatcher::dispatch(const IrcMessage& message) noexcept
 {
-    // only handle PRIVMSGs with at least one parameter
-    if (msg.commandLen != 7 ||
-        std::memcmp(msg.command, "PRIVMSG", 7) != 0 ||
-        msg.paramCount < 1)
+    // Fast-reject non-PRIVMSG or missing params
+    if (message.command != "PRIVMSG" ||
+        message.param_count < 1)
     {
         return;
     }
 
-    std::string_view channel{ msg.params[0], msg.paramLens[0] };
-    channel = normaliseChannel(channel);
+    // Normalize channel and extract user
+    auto const channel = normalizeChannel(message.params[0]);
+    auto const user    = extractUser(message.prefix);
 
-    std::string_view user{ msg.prefix, msg.prefixLen };
-    user = extractUser(user);
-
-    std::string_view text{ msg.trailing, msg.trailingLen };
-
+    // Check for '!' to decide between command vs chat
+    auto const text = message.trailing;
     if (!text.empty() && text.front() == '!') {
-        // split "!cmd args" into fullCmd and args
-        auto [fullCmd, args] = splitCommand(text);
-        std::string_view cmdName = fullCmd.substr(1);  // drop '!'
+        // Inline split
+        std::string_view cmdName, args;
+        splitCommand(text, cmdName, args);
 
-        auto it = commandMap_.find(cmdName);
-        if (it != commandMap_.end()) {
-            auto handler = it->second;
-            bool isModerator = msg.isModerator;
+        // Transparent lookup (no allocations on find)
+        if (auto it = commands_.find(cmdName);
+            it != commands_.end())
+        {
+            bool const isMod = message.is_moderator;
+            auto const handler = it->second;
 
             boost::asio::co_spawn(
                 executor_,
-                // capture cmdName explicitly!
-                [handler, channel, user, args, isModerator, cmdName]()
+                [handler, channel, user, args, isMod, cmdName]() 
                 -> boost::asio::awaitable<void>
                 {
                     try {
-                        co_await handler(channel, user, args, isModerator);
-                    }
-                    catch (const std::exception& e) {
-                        std::cerr << "[CommandDispatcher] handler for '"
-                            << cmdName << "' threw: "
-                            << e.what() << '\n';
+                        co_await handler(channel, user, args, isMod);
+                    } catch (std::exception const& e) {
+                        std::cerr << "[Dispatcher] '" << cmdName
+                                  << "' threw: " << e.what() << "\n";
                     }
                 },
                 boost::asio::detached);
@@ -74,37 +69,10 @@ void CommandDispatcher::dispatch(const IrcMessage& msg) noexcept
         }
     }
 
-    // fallback: normal chat listeners
-    for (auto& listener : chatListeners_) {
+    // Fallback: regular chat listeners
+    for (auto const& listener : chat_listeners_) {
         listener(channel, user, text);
     }
-}
-
-std::string_view CommandDispatcher::normaliseChannel(
-    std::string_view raw) noexcept
-{
-    return (!raw.empty() && raw.front() == '#')
-         ? raw.substr(1)
-         : raw;
-}
-
-std::string_view CommandDispatcher::extractUser(
-    std::string_view prefix) noexcept
-{
-    auto pos = prefix.find('!');
-    return (pos != std::string_view::npos)
-         ? prefix.substr(0, pos)
-         : prefix;
-}
-
-std::pair<std::string_view, std::string_view>
-CommandDispatcher::splitCommand(std::string_view text) noexcept
-{
-    auto pos = text.find(' ');
-    if (pos == std::string_view::npos) {
-        return { text, std::string_view{} };
-    }
-    return { text.substr(0, pos), text.substr(pos + 1) };
 }
 
 } // namespace twitch_bot

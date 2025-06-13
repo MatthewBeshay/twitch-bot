@@ -6,32 +6,34 @@
 #include <limits>
 
 int main() {
-    int exitCode = EXIT_SUCCESS;
-
     try {
+        // Load the immutable application configuration
         auto cfg = env::Config::load();
+
+        // Unpack only the values TwitchBot actually needs
         twitch_bot::TwitchBot bot{
-            /* oauthToken     = */ cfg.twitchChatOauthToken,
-            /* clientId       = */ cfg.twitchAppClientId,
-            /* clientSecret   = */ cfg.twitchAppClientSecret,
-            /* controlChannel = */ cfg.twitchBotChannel
+            /* oauthToken     = */ cfg.chat().oauth_token,
+            /* clientId       = */ cfg.app().client_id,
+            /* clientSecret   = */ cfg.app().client_secret,
+            /* controlChannel = */ cfg.bot().channel
         };
+
         bot.run();
     }
     catch (const env::EnvError& e) {
-        std::cerr << "Configuration error: " << e.what() << "\n";
-        exitCode = EXIT_FAILURE;
+        std::cerr << "Configuration error: " << e.what() << '\n';
+        return EXIT_FAILURE;
     }
     catch (const std::exception& e) {
-        std::cerr << "Fatal startup error: " << e.what() << "\n";
-        exitCode = EXIT_FAILURE;
+        std::cerr << "Fatal startup error: " << e.what() << '\n';
+        return EXIT_FAILURE;
     }
 
-  #ifndef NDEBUG
-    // In debug builds, wait for the user to hit Enter before closing.
+#ifndef NDEBUG
+    // In debug builds, wait for the user to hit Enter before closing
     std::cerr << "\nPress Enter to exit...";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-  #endif
+#endif
 
-    return exitCode;
+    return EXIT_SUCCESS;
 }

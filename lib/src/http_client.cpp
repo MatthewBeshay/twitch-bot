@@ -1,16 +1,13 @@
 ﻿#include "http_client.hpp"
 
 #include <chrono>
-#include <stdexcept>
-#include <string>
-#include <string_view>
+#include <system_error>
 
 #include <boost/asio/connect.hpp>
-#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
 #include <boost/beast/core.hpp>
-#include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/version.hpp>
 
@@ -19,10 +16,8 @@
 namespace http_client {
 namespace detail {
 
-/// Build pool key "host:port".
-inline std::string makePoolKey(std::string_view host,
-                               std::string_view port) noexcept
-{
+inline std::string make_pool_key(std::string_view host,
+                                 std::string_view port) noexcept {
     std::string key;
     key.reserve(host.size() + 1 + port.size());
     key.append(host);
@@ -31,164 +26,166 @@ inline std::string makePoolKey(std::string_view host,
     return key;
 }
 
-/// Format an HTTP-error message.
-inline std::string makeErrorMsg(std::string_view host,
-                                std::string_view target,
-                                int               status) noexcept
-{
-  std::string msg;
-  msg.reserve(host.size() + target.size() + 32);
-  msg.append(host)
-     .append(target)
-     .append(" returned ")
-     .append(std::to_string(status));
-  return msg;
+inline std::string make_error_msg(std::string_view host,
+                                  std::string_view target,
+                                  int               status) noexcept {
+    std::string msg;
+    msg.reserve(host.size() + target.size() + 32);
+    msg.append(host)
+       .append(target)
+       .append(" returned ")
+       .append(std::to_string(status));
+    return msg;
 }
 
 } // namespace detail
 
-// Represents one persistent TLS connection.
-struct Client::Connection {
-  boost::beast::ssl_stream<boost::beast::tcp_stream> stream;
-  boost::beast::flat_buffer                   buffer;
+struct client::connection {
+    boost::beast::ssl_stream<boost::beast::tcp_stream> stream;
+    static constexpr std::size_t                        buffer_size = 16 * 1024;
+    boost::beast::flat_static_buffer<buffer_size>       buffer;
 
-  explicit Connection(boost::beast::ssl_stream<boost::beast::tcp_stream>&& s) noexcept
-    : stream(std::move(s)), buffer() {}
+    explicit connection(boost::beast::ssl_stream<boost::beast::tcp_stream>&& s) noexcept
+        : stream(std::move(s)), buffer()
+    {
+    }
 
-  /// Clear buffers before reuse.
-  void reset() noexcept { buffer.clear(); }
+    /// Reset buffer before reuse
+    TB_FORCE_INLINE void
+    reset() noexcept { buffer.clear(); }
 };
 
-Client::Client(boost::asio::any_io_executor executor,
-               boost::asio::ssl::context&   sslCtx) noexcept
-  : executor_(executor),
-    sslCtx_(sslCtx),
-    resolver_(executor),
-    strand_(executor)
-{}
+client::client(boost::asio::any_io_executor executor,
+               boost::asio::ssl::context&   ssl_context,
+               std::size_t                  expected_hosts,
+               std::size_t                  expected_conns_per_host) noexcept
+    : executor_{executor}
+    , ssl_context_{ssl_context}
+    , resolver_{executor_}
+    , strand_{executor_}
+    , expected_conns_per_host_{expected_conns_per_host} {
+    pool_.reserve(expected_hosts);
+}
 
-boost::asio::awaitable<Result>
-Client::perform(boost::beast::http::verb method,
-                std::string_view       host,
-                std::string_view       port,
-                std::string_view       target,
-                std::string_view       body,
-                HttpHeaders            headers) noexcept
-{
-  // 1) Borrow or create connection
-  auto key  = detail::makePoolKey(host, port);
-  std::shared_ptr<Connection> conn;
+client::allocator_type client::get_allocator() const noexcept {
+    return allocator_type(&handler_buffer_);
+}
 
-  co_await boost::asio::post(strand_, boost::asio::use_awaitable);
-  auto &vec = pool_[key];
-  if (!vec.empty()) {
-    conn = std::move(vec.back());
-    vec.pop_back();
-  }
+boost::asio::awaitable<result> client::perform(boost::beast::http::verb method,
+                                               std::string_view         host,
+                                               std::string_view         port,
+                                               std::string_view         target,
+                                               std::string_view         body,
+                                               http_headers             headers) noexcept {
+    co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
-  if (!conn) {
-    // Resolve DNS
-    auto endpoints = co_await resolver_.async_resolve(
-      host, port, boost::asio::use_awaitable);
+    auto                        key = detail::make_pool_key(host, port);
+    auto                        it  = pool_.find(key);
+    std::shared_ptr<connection> conn;
 
-    // TCP connect
-    boost::beast::tcp_stream tcp{executor_};
-    tcp.expires_after(std::chrono::seconds{30});
-    co_await tcp.async_connect(endpoints,
-                               boost::asio::use_awaitable);
-
-    // TLS handshake with SNI
-    boost::beast::ssl_stream<boost::beast::tcp_stream> ssl{std::move(tcp), sslCtx_};
-    if (!SSL_set_tlsext_host_name(
-          ssl.native_handle(), host.data())) {
-      throw std::system_error{
-        static_cast<int>(::ERR_get_error()),
-        boost::asio::error::get_ssl_category(),
-        "SNI failure"
-      };
+    if (it != pool_.end() && !it->second.empty()) {
+        conn = std::move(it->second.back());
+        it->second.pop_back();
     }
-    co_await ssl.async_handshake(
-      boost::asio::ssl::stream_base::client,
-      boost::asio::use_awaitable);
 
-    conn = std::make_shared<Connection>(std::move(ssl));
-  }
+    if (!conn) {
+        if (it == pool_.end()) {
+            auto& vec = pool_[key];
+            vec.reserve(expected_conns_per_host_);
+            it = pool_.find(key);
+        }
 
-  // 2) Build request
-  boost::beast::http::request<boost::beast::http::string_body> req{method, target, 11};
-  req.set(boost::beast::http::field::host,       host);
-  req.set(boost::beast::http::field::user_agent, BOOST_BEAST_VERSION_STRING);
-  for (auto const &h : headers) {
-    req.set(h.first, h.second);
-  }
-  if (method == boost::beast::http::verb::post) {
-    auto &b = req.body();
-    b.clear();
-    b.reserve(body.size());
-    b.append(body);
-    req.prepare_payload();
-  }
+        auto endpoints =
+            co_await resolver_.async_resolve(host, port, boost::asio::use_awaitable);
 
-  conn->reset();
+        boost::beast::tcp_stream tcp(executor_);
+        tcp.expires_after(std::chrono::seconds(30));
+        co_await tcp.async_connect(endpoints, boost::asio::use_awaitable);
 
-  // 3) Send + receive
-  co_await boost::beast::http::async_write(conn->stream, req,
-                                           boost::asio::use_awaitable);
-  boost::beast::http::response<boost::beast::http::string_body> res;
-  co_await boost::beast::http::async_read(conn->stream, conn->buffer, res,
-                                          boost::asio::use_awaitable);
+        boost::beast::ssl_stream<boost::beast::tcp_stream> ssl(
+            std::move(tcp), ssl_context_);
+        if (!SSL_set_tlsext_host_name(ssl.native_handle(), host.data())) {
+            throw std::system_error(
+                static_cast<int>(::ERR_get_error()),
+                boost::asio::error::get_ssl_category(),
+                "SNI failure");
+        }
+        co_await ssl.async_handshake(
+            boost::asio::ssl::stream_base::client,
+            boost::asio::use_awaitable);
 
-  int status = res.result_int();
-  if (status < 200 || status >= 300) {
-    // Return connection on error
-    co_await boost::asio::post(strand_, boost::asio::use_awaitable);
-    pool_[key].push_back(std::move(conn));
-    throw std::runtime_error(
-      detail::makeErrorMsg(host, target, status));
-  }
+        conn = std::make_shared<connection>(std::move(ssl));
+    }
 
-  // 4) Parse JSON with your JsonOpts
-  std::string bodyBuf = std::move(res.body());
+    boost::beast::http::request<boost::beast::http::string_body> req{method, target, 11};
+    req.set(boost::beast::http::field::host,       host);
+    req.set(boost::beast::http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
-  // Create an empty Json object
-  Json j{};
+    for (auto const& h : headers) {
+        req.set(h.first, h.second);
+    }
 
-  // Read using your custom options
-  auto ec = glz::read<JsonOpts>(j, bodyBuf);
-  if (ec) {
-      // Return the connection to the pool before bailing
-      co_await boost::asio::post(strand_, boost::asio::use_awaitable);
-      pool_[key].push_back(std::move(conn));
-      co_return glz::unexpected(ec);
-  }
+    if (method == boost::beast::http::verb::post) {
+        auto& b = req.body();
+        b.clear();
+        b.reserve(body.size());
+        b.append(body);
+        req.prepare_payload();
+    }
 
-  // 5) Recycle the connection and return the parsed JSON
-  co_await boost::asio::post(strand_, boost::asio::use_awaitable);
-  pool_[key].push_back(std::move(conn));
-  co_return j;
+    conn->reset();
+
+    co_await boost::beast::http::async_write(
+        conn->stream, req, boost::asio::use_awaitable);
+
+    boost::beast::http::response<boost::beast::http::string_body> res;
+    co_await boost::beast::http::async_read(
+        conn->stream, conn->buffer, res, boost::asio::use_awaitable);
+
+    int status = res.result_int();
+    if (status < 200 || status >= 300) {
+        it->second.push_back(std::move(conn));
+        throw std::runtime_error(
+            detail::make_error_msg(host, target, status));
+    }
+
+    std::string body_buf = std::move(res.body());
+    json        j;
+    auto        ec = glz::read<json_opts>(j, body_buf);
+    if (ec) {
+        it->second.push_back(std::move(conn));
+        co_return glz::unexpected(ec);
+    }
+
+    it->second.push_back(std::move(conn));
+    co_return j;
 }
 
-boost::asio::awaitable<Result>
-Client::get(std::string_view host,
-            std::string_view port,
-            std::string_view target,
-            HttpHeaders      headers) noexcept
-{
-  co_return co_await perform(
-    boost::beast::http::verb::get,
-    host, port, target, {}, headers);
+boost::asio::awaitable<result> client::get(std::string_view host,
+                                          std::string_view port,
+                                          std::string_view target,
+                                          http_headers     headers) noexcept {
+    co_return co_await perform(
+        boost::beast::http::verb::get,
+        host,
+        port,
+        target,
+        {},
+        headers);
 }
 
-boost::asio::awaitable<Result>
-Client::post(std::string_view host,
-             std::string_view port,
-             std::string_view target,
-             std::string_view body,
-             HttpHeaders      headers) noexcept
-{
-  co_return co_await perform(
-    boost::beast::http::verb::post,
-    host, port, target, body, headers);
+boost::asio::awaitable<result> client::post(std::string_view host,
+                                           std::string_view port,
+                                           std::string_view target,
+                                           std::string_view body,
+                                           http_headers     headers) noexcept {
+    co_return co_await perform(
+        boost::beast::http::verb::post,
+        host,
+        port,
+        target,
+        body,
+        headers);
 }
 
 } // namespace http_client
