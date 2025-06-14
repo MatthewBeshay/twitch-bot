@@ -1,69 +1,93 @@
 ﻿#pragma once
 
-// C++ Standard Library
-#include <algorithm>
-#include <memory>
+#include "command_dispatcher.hpp"
+#include "irc_client.hpp"
+#include "helix_client.hpp"
+#include "channel_store.hpp"
+#include "faceit_client.hpp"
+
 #include <string>
-#include <thread>
-#include <vector>
+#include <functional>
+#include <memory>
 
 // 3rd-party
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/ssl/context.hpp>
-#include <boost/asio/strand.hpp>
-#include <boost/asio/thread_pool.hpp>
-
-// Project
-#include "channel_store.hpp"
-#include "command_dispatcher.hpp"
-#include "helix_client.hpp"
-#include "irc_client.hpp"
+#include <boost/asio/awaitable.hpp>
 
 namespace twitch_bot {
 
-/// High-level bot tying together IRC, commands, Helix and channel storage.
-/// Runs all I/O on a single strand with a pool of threads.
-class TwitchBot
-{
+/**
+ * @brief The "glue" class that ties together:
+ *   - IrcClient        (network + IRC framing)
+ *   - CommandDispatcher (dispatch commands + chat callbacks)
+ *   - HelixClient      (OAuth + Helix calls)
+ *   - ChannelStore     (persist alias + FACEIT nick per channel)
+ *   - faceit::Client   (FACEIT Data API)
+ *
+ * Public API:
+ *   - TwitchBot(oauthToken, clientId, clientSecret, controlChannel, faceitApiKey)
+ *   - ~TwitchBot()
+ *   - void run()                     // blocks until termination
+ *   - void addChatListener(cb)       // register "on chat" callbacks
+ */
+class TwitchBot {
 public:
-    /// @pre oauth_token, client_id, client_secret and control_channel are non-empty.
-    explicit TwitchBot(std::string oauth_token,
-                       std::string client_id,
-                       std::string client_secret,
-                       std::string control_channel,
-                       std::size_t threads = std::thread::hardware_concurrency());
+    /**
+     * @brief Construct a TwitchBot.
+     *
+     * @param oauthToken       Raw OAuth token for Twitch chat (no leading "oauth:").
+     * @param clientId         Twitch App client ID (Helix).
+     * @param clientSecret     Twitch App client secret (Helix).
+     * @param controlChannel   Channel where bot listens for control commands.
+     * @param faceitApiKey     FACEIT Data API key (v4).
+     */
+    TwitchBot(std::string oauthToken,
+              std::string clientId,
+              std::string clientSecret,
+              std::string controlChannel,
+              std::string faceitApiKey);
 
     ~TwitchBot() noexcept;
 
     TwitchBot(const TwitchBot &) = delete;
     TwitchBot &operator=(const TwitchBot &) = delete;
 
-    /// Start the bot and block until stopped.
+    /**
+     * @brief Start the bot:
+     *   1) Load channels (alias+faceit) from disk
+     *   2) co_spawn runBot()
+     *   3) block in ioc_.run() until shutdown
+     */
     void run();
 
-    /// Add a callback for every non-command chat message.
-    void add_chat_listener(chat_listener_t listener);
+    /**
+     * @brief Register a chat listener (called on every PRIVMSG that isn't a simple bot command).
+     * Internally this calls dispatcher_->registerChatListener(cb).
+     */
+    void addChatListener(ChatListener cb);
 
 private:
-    boost::asio::awaitable<void> run_bot() noexcept;
+    /// The main coroutine: connects, spawns ping/read loops, then idles forever.
+    boost::asio::awaitable<void> runBot();
 
-    static constexpr std::string_view CRLF{"\r\n"};
+    // --- Underlying components ---
+    boost::asio::io_context             ioc_;
+    boost::asio::ssl::context           ssl_ctx_;
 
-    boost::asio::thread_pool pool_;
-    boost::asio::strand<boost::asio::any_io_executor> strand_;
-    boost::asio::ssl::context ssl_ctx_;
+    std::unique_ptr<IrcClient>          ircClient_;       ///< IRC over WebSocket+TLS
+    std::unique_ptr<CommandDispatcher>  dispatcher_;      ///< parse & dispatch commands
+    std::unique_ptr<HelixClient>        helixClient_;     ///< Helix REST calls
+    std::unique_ptr<ChannelStore>       channelStore_;    ///< alias + FACEIT nick persistence
+    std::unique_ptr<faceit::Client>     faceitClient_;    ///< FACEIT Data API client
 
-    const std::string oauth_token_;
-    const std::string client_id_;
-    const std::string client_secret_;
-    const std::string control_channel_;
-
-    IrcClient irc_client_;
-    CommandDispatcher dispatcher_;
-    HelixClient helix_client_;
-    ChannelStore channel_store_;
+    // Immutable configuration:
+    const std::string                    oauthToken_;
+    const std::string                    clientId_;
+    const std::string                    clientSecret_;
+    const std::string                    controlChannel_;
 };
 
 } // namespace twitch_bot

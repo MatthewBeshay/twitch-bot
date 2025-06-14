@@ -1,80 +1,76 @@
-// C++ Standard Library
+#include "command_dispatcher.hpp"
+
 #include <iostream>
 
-// 3rd-party
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
-
-// Project
-#include "command_dispatcher.hpp"
+#include <boost/asio/this_coro.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 namespace twitch_bot {
 
-CommandDispatcher::CommandDispatcher(boost::asio::any_io_executor executor) noexcept
-    : executor_(std::move(executor))
+boost::asio::awaitable<void> CommandDispatcher::dispatch(
+    IrcMessage const& msg)
 {
-    commands_.reserve(16);
-    chat_listeners_.reserve(4);
-}
-
-void CommandDispatcher::register_command(std::string_view command,
-                                         command_handler_t handler) noexcept
-{
-    commands_.try_emplace(std::string{command}, std::move(handler));
-}
-
-void CommandDispatcher::register_chat_listener(chat_listener_t listener) noexcept
-{
-    chat_listeners_.push_back(std::move(listener));
-}
-
-void CommandDispatcher::dispatch(IrcMessage msg) noexcept
-{
-    // ignore non-PRIVMSG or missing parameters
-    if (msg.command != "PRIVMSG" || msg.param_count < 1) {
-        return;
+    // 1) Only proceed if this is a PRIVMSG with at least one param (the channel).
+    if (msg.command != "PRIVMSG" || msg.params.empty()) {
+        co_return;
     }
 
-    // extract channel and user
-    std::string_view channel = normalize_channel(msg.params[0]);
-    std::string_view user = extract_user(msg.prefix);
-    std::string_view text = msg.trailing;
+    // 2) Extract channel name (strip leading '#', if present).
+    std::string_view rawChan = msg.params[0];
+    std::string_view channel = (rawChan.size() > 0 && rawChan.front() == '#')
+        ? rawChan.substr(1)
+        : rawChan;
 
-    // handle commands prefixed with '!'
-    if (!text.empty() && text.front() == '!') {
-        std::string_view cmd_name;
-        std::string_view args;
-        split_command(text, cmd_name, args);
-
-        auto it = commands_.find(cmd_name);
-        if (it != commands_.end()) {
-            // prepare message for handler
-            IrcMessage cmd_msg = msg;
-            cmd_msg.command = cmd_name;
-            cmd_msg.params[0] = channel;
-            cmd_msg.prefix = user;
-            cmd_msg.trailing = args;
-
-            auto handler = it->second;
-            boost::asio::co_spawn(
-                executor_,
-                [handler, cmd_msg = std::move(cmd_msg)]() mutable -> boost::asio::awaitable<void> {
-                    try {
-                        co_await handler(cmd_msg);
-                    } catch (std::exception const &e) {
-                        std::cerr << "[dispatcher] '" << cmd_msg.command << "' threw: " << e.what()
-                                  << "\n";
-                    }
-                },
-                boost::asio::detached);
-            return;
+    // 3) Extract user from prefix.
+    //    parseIrcLine(...) already removed the leading ':' from msg.prefix,
+    //    so msg.prefix == "username!username@...".  We simply split at the '!' now.
+    // 3) Extract user from prefix (prefix is ":username!username@...").
+    std::string_view user;
+    if (!msg.prefix.empty()) {
+        std::string_view prefix = msg.prefix;
+        if (prefix.front() == ':') {
+            prefix.remove_prefix(1);
         }
+
+        const auto excl = prefix.find('!');
+        user = (excl != std::string_view::npos)
+            ? prefix.substr(0, excl)
+            : prefix;
     }
 
-    // notify chat listeners
-    for (auto const &listener : chat_listeners_) {
-        listener(channel, user, text);
+    // 4) Check if trailing text begins with '!' (indicating a command).
+    std::string_view text = msg.trailing;
+    if (!text.empty() && text.front() == '!') {
+        // Split into command token and the rest as args.
+        auto space = text.find(' ');
+        std::string_view cmd = (space == std::string_view::npos)
+            ? text
+            : text.substr(0, space);
+        std::string_view args = (space == std::string_view::npos)
+            ? std::string_view{}
+            : text.substr(space + 1);
+
+        // 5) Heterogeneous lookup: no temporary std::string construction.
+        auto it = commandMap_.find(cmd);
+        if (it != commandMap_.end()) {
+            try {
+                co_await it->second(channel, user, args, msg.tags);
+            }
+            catch (const std::exception& e) {
+                std::cerr << "[CommandDispatcher] Handler for '"
+                          << cmd << "' threw exception: " << e.what() << "\n";
+            }
+            co_return;
+        }
+        // If command not found, fall through to chat listeners.
     }
+
+    // 6) Notify all registered ChatListener callbacks.
+    for (auto& cb : chatListeners_) {
+        cb(channel, user, text);
+    }
+
+    co_return;
 }
 
 } // namespace twitch_bot

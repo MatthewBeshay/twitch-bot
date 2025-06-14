@@ -1,96 +1,105 @@
-// C++ Standard Library
-#include <initializer_list>
-#include <string_view>
-#include <utility>
+﻿#include "config.hpp"
+#include "faceit_client.hpp"
 
-// 3rd-party
+#include <filesystem>
+#include <sstream>
+
 #include <toml++/toml.hpp>
 
-// Project
-#include "config.hpp"
+namespace {
+
+/// Join ["twitch","chat","oauth_token"] -> "twitch.chat.oauth_token"
+std::string join_keys(std::initializer_list<std::string_view> keys) noexcept {
+    std::string out;
+    out.reserve(64);
+    bool first = true;
+    for (auto k : keys) {
+        if (!first) out.push_back('.');
+        out.append(k);
+        first = false;
+    }
+    return out;
+}
+
+/// Fetch a string at a dotted-path in the TOML table or throw EnvError.
+std::string fetch_string(const toml::table& tbl,
+                         const std::filesystem::path& path,
+                         std::initializer_list<std::string_view> keys)
+{
+    auto dotted = join_keys(keys);
+    auto node   = tbl.at_path(dotted);
+    if (auto opt = node.template value<std::string>(); opt) {
+        return *opt;
+    }
+    throw env::EnvError{
+        "Missing or invalid key [" + dotted + "] in " + path.string()
+    };
+}
+
+/// Parse the TOML file at @p path and return a populated Config.
+/// @throws EnvError on parse failure or missing keys.
+env::Config parseToml(const std::filesystem::path& path) {
+    toml::table tbl;
+
+#if TOML_EXCEPTIONS
+    try {
+        tbl = toml::parse_file(path.string());
+    }
+    catch (const toml::parse_error& err) {
+        std::ostringstream oss;
+        oss << "TOML parse error in '" << path << "': " << err;
+        throw env::EnvError{oss.str()};
+    }
+    catch (const std::exception& ex) {
+        throw env::EnvError{
+            "Failed to load '" + path.string() + "': " + ex.what()
+        };
+    }
+#else
+    auto result = toml::parse_file(path.string());
+    if (!result) {
+        std::ostringstream oss;
+        oss << "TOML parse error in '" << path << "': " << result.error();
+        throw env::EnvError{oss.str()};
+    }
+    tbl = *result;
+#endif
+
+    env::Config cfg;
+    cfg.twitchChatOauthToken_   = fetch_string(tbl, path, {"twitch","chat","oauth_token"});
+    cfg.twitchChatRefreshToken_ = fetch_string(tbl, path, {"twitch","chat","refresh_token"});
+    cfg.twitchAppClientId_      = fetch_string(tbl, path, {"twitch","app","client_id"});
+    cfg.twitchAppClientSecret_  = fetch_string(tbl, path, {"twitch","app","client_secret"});
+    cfg.twitchBotChannel_       = fetch_string(tbl, path, {"twitch","bot","channel"});
+    cfg.faceitApiKey_           = fetch_string(tbl, path, {"faceit","api_key"});
+    return cfg;
+}
+
+/// Locate "config.toml"-check CWD first, then fallback to CMake-baked path.
+std::filesystem::path findConfigFile() noexcept {
+    auto cwd       = std::filesystem::current_path();
+    auto candidate = cwd / "config.toml";
+    if (std::filesystem::exists(candidate)) {
+        return candidate;
+    }
+    return getConfigPath();  // from config_path.hpp
+}
+
+} // anonymous namespace
 
 namespace env {
 
-Config Config::parse_config(const std::filesystem::path &path)
-{
-    const auto path_str = path.string();
-    toml::table tbl;
-
-    try {
-        tbl = toml::parse_file(path_str);
-    } catch (const toml::parse_error &e) {
-        throw EnvError("TOML parse error in '" + path_str + "': " + e.what());
-    } catch (const std::filesystem::filesystem_error &e) {
-        throw EnvError("Cannot read config file '" + path_str + "': " + e.what());
+Config Config::load(const std::filesystem::path& tomlFilePath) {
+    if (!std::filesystem::exists(tomlFilePath)) {
+        throw EnvError{
+            "Config file not found: " + tomlFilePath.string()
+        };
     }
-
-    // Fetch a non-empty string at the given key path
-    auto fetch_string = [&](std::initializer_list<std::string_view> keys) -> std::string {
-        const toml::node *node = &tbl;
-
-        for (auto key : keys) {
-            const auto *table_ptr = node->as_table();
-            if (!table_ptr) {
-                throw EnvError("Expected table at '" + std::string{key} + "' in " + path_str);
-            }
-
-            const auto *found = table_ptr->get(key);
-            if (!found) {
-                std::string dotted;
-                for (auto k : keys) {
-                    if (!dotted.empty()) {
-                        dotted += '.';
-                    }
-                    dotted += k;
-                }
-                throw EnvError("Missing key '" + dotted + "' in " + path_str);
-            }
-
-            node = found;
-        }
-
-        if (auto opt = node->value<std::string>()) {
-            if (opt->empty()) {
-                throw EnvError("Empty value in " + path_str);
-            }
-            return *opt;
-        }
-
-        throw EnvError("Non-string value in " + path_str);
-    };
-
-    ChatConfig chat_cfg{.oauth_token=fetch_string({"twitch", "chat", "oauth_token"}),
-                        .refresh_token=fetch_string({"twitch", "chat", "refresh_token"})};
-
-    AppConfig app_cfg{.client_id=fetch_string({"twitch", "app", "client_id"}),
-                      .client_secret=fetch_string({"twitch", "app", "client_secret"})};
-
-    BotConfig bot_cfg{fetch_string({"twitch", "bot", "channel"})};
-
-    return {std::move(chat_cfg), std::move(app_cfg), std::move(bot_cfg)};
+    return parseToml(tomlFilePath);
 }
 
-Config Config::load_file(const std::filesystem::path &path)
-{
-    if (path.string().empty()) {
-        throw EnvError("Config file path must not be empty");
-    }
-    return parse_config(path);
-}
-
-Config Config::load()
-{
-    const auto default_path = std::filesystem::current_path() / "config.toml";
-
-    if (!std::filesystem::exists(default_path)) {
-        throw EnvError("Config file not found at '" + default_path.string() + "'");
-    }
-
-    return parse_config(default_path);
-}
-
-EnvError::EnvError(const std::string& msg) noexcept : std::runtime_error{msg}
-{
+Config Config::load() {
+    return load(findConfigFile());
 }
 
 } // namespace env

@@ -12,10 +12,7 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ssl/context.hpp>
 
-// Project
-#include "utils/attributes.hpp"
-
-#include "http_client.hpp"
+#include <boost/json.hpp>
 
 namespace twitch_bot {
 

@@ -1,7 +1,9 @@
 // command_dispatcher.hpp
 #pragma once
 
-// C++ Standard Library
+#include "message_parser.hpp"  // Defines IrcMessage
+#include "utils/transparent_string.hpp"
+
 #include <functional>
 #include <string>
 #include <string_view>
@@ -20,13 +22,25 @@
 
 namespace twitch_bot {
 
-using chat_listener_t
-    = std::function<void(std::string_view channel, std::string_view user, std::string_view text)>;
-using command_handler_t = std::function<boost::asio::awaitable<void>(IrcMessage msg)>;
+/// Called on every PRIVMSG (channel, user, message).
+using ChatListener = std::function<void(std::string_view channel,
+                                        std::string_view user,
+                                        std::string_view message)>;
 
-// Dispatches parsed IRC messages to command handlers or chat listeners.
-class CommandDispatcher
-{
+/// Called when a registered command (e.g. "!join") is invoked.
+/// The `tags` map contains IRC tags from the incoming message.
+using CommandHandler = std::function<
+    boost::asio::awaitable<void>(std::string_view                                         channel,
+                                  std::string_view                                         user,
+                                  std::string_view                                         args,
+                                  const std::unordered_map<std::string_view,std::string_view>& tags)>;
+
+/**
+ * @brief CommandDispatcher inspects each IrcMessage. If it's a PRIVMSG and the
+ *        trailing text starts with '!', it tries to match a registered command
+ *        handler. Otherwise, it notifies all registered ChatListener callbacks.
+ */
+class CommandDispatcher {
 public:
     // Construct with an executor for spawning handlers.
     explicit CommandDispatcher(boost::asio::any_io_executor executor) noexcept;
@@ -37,47 +51,49 @@ public:
     // Register a fallback chat listener.
     void register_chat_listener(chat_listener_t listener) noexcept;
 
-    // Dispatch a parsed IRC message asynchronously.
-    void dispatch(IrcMessage msg) noexcept;
+    /**
+     * @brief Register a handler for a specific command (including leading '!').
+     *        Example: registerCommand("!join", [](auto ch, auto user, auto args, auto& tags){ ... });
+     *
+     * @param cmd      The command name (with leading '!'), e.g. "!join".
+     * @param handler  The coroutine to invoke when that command is seen.
+     */
+    void registerCommand(std::string_view cmd, CommandHandler handler) {
+        // We store std::string(cmd) as the key; heterogeneous lookup is enabled.
+        commandMap_.emplace(std::string(cmd), std::move(handler));
+    }
+
+    /**
+     * @brief Register a generic chat listener invoked on every PRIVMSG (command or not).
+     *
+     * @param listener  Called with (channel, user, message) for each PRIVMSG.
+     */
+    void registerChatListener(ChatListener listener) {
+        chatListeners_.push_back(std::move(listener));
+    }
+
+    /**
+     * @brief Dispatch a parsed IrcMessage. If it's PRIVMSG and starts with '!',
+     *        split into command + args, look up a handler (via heterogeneous lookup),
+     *        and co_await it (passing along msg.tags). Otherwise, call all
+     *        ChatListener callbacks.
+     *
+     * @param msg  An IrcMessage (tags/prefix/command/params/trailing) parsed earlier.
+     */
+    boost::asio::awaitable<void> dispatch(IrcMessage const& msg);
 
 private:
-    // Remove leading '#' from a channel name.
-    static TB_FORCE_INLINE std::string_view normalize_channel(std::string_view raw) noexcept
-    {
-        return (!raw.empty() && raw.front() == '#') ? raw.substr(1) : raw;
-    }
+    // Store commands in an unordered_map keyed by std::string,
+    // but allow lookup by std::string_view without allocations.
+    std::unordered_map<
+        std::string,
+        CommandHandler,
+        TransparentStringHash,
+        TransparentStringEq
+    > commandMap_;
 
-    // Extract the username from an IRC prefix.
-    static TB_FORCE_INLINE std::string_view extract_user(std::string_view prefix) noexcept
-    {
-        auto pos = prefix.find('!');
-        return (pos != std::string_view::npos) ? prefix.substr(0, pos) : prefix;
-    }
-
-    // Split "!cmd args" into command name and args.
-    static TB_FORCE_INLINE void split_command(std::string_view text,
-                                              std::string_view &out_cmd,
-                                              std::string_view &out_args) noexcept
-    {
-        if (text.size() > 1 && text.front() == '!') {
-            auto pos = text.find(' ');
-            if (pos == std::string_view::npos) {
-                out_cmd = text.substr(1);
-                out_args = {};
-            } else {
-                out_cmd = text.substr(1, pos - 1);
-                out_args = text.substr(pos + 1);
-            }
-        } else {
-            out_cmd = {};
-            out_args = {};
-        }
-    }
-
-    boost::asio::any_io_executor executor_;
-    std::unordered_map<std::string, command_handler_t, TransparentStringHash, TransparentStringEq>
-        commands_;
-    std::vector<chat_listener_t> chat_listeners_;
+    // List of callbacks for plain chat messages (or fallback if no command matches).
+    std::vector<ChatListener> chatListeners_;
 };
 
 } // namespace twitch_bot

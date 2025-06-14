@@ -5,6 +5,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
+#include <functional>
 
 // 3rd-party
 #include <boost/asio/any_io_executor.hpp>
@@ -14,10 +16,8 @@
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/stream.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/use_awaitable.hpp>
 
-#include <boost/beast/core/flat_buffer.hpp>
-#include <boost/beast/core/static_buffer.hpp>
+#include <boost/beast/websocket.hpp>
 #include <boost/beast/websocket/ssl.hpp>
 #include <boost/beast/websocket/stream.hpp>
 

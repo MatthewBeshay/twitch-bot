@@ -1,7 +1,11 @@
-// C++ Standard Library
-#include <array>
+#include "twitch_bot.hpp"
+#include "message_parser.hpp"
+#include "faceit_client.hpp"
+
 #include <iostream>
-#include <span>
+#include <sstream>
+#include <algorithm>
+#include <climits>
 
 // 3rd-party
 #include <boost/asio/co_spawn.hpp>
@@ -15,169 +19,441 @@
 
 namespace twitch_bot {
 
-TwitchBot::TwitchBot(std::string oauth_token,
-                     std::string client_id,
-                     std::string client_secret,
-                     std::string control_channel,
-                     std::size_t threads)
-    : pool_{threads > 0 ? threads : 1}
-    , strand_{pool_.get_executor()}
-    , ssl_ctx_{boost::asio::ssl::context::tlsv12_client}
-    , oauth_token_{std::move(oauth_token)}
-    , client_id_{std::move(client_id)}
-    , client_secret_{std::move(client_secret)}
-    , control_channel_{std::move(control_channel)}
-    , irc_client_{strand_, ssl_ctx_, oauth_token_, control_channel_}
-    , dispatcher_{strand_}
-    , helix_client_{strand_, ssl_ctx_, client_id_, client_secret_}
-    , channel_store_{strand_}
+TwitchBot::TwitchBot(std::string oauthToken,
+                     std::string clientId,
+                     std::string clientSecret,
+                     std::string controlChannel,
+                     std::string faceitApiKey)
+  : ioc_(),
+    ssl_ctx_(boost::asio::ssl::context::tlsv12_client),
+    oauthToken_(std::move(oauthToken)),
+    clientId_(std::move(clientId)),
+    clientSecret_(std::move(clientSecret)),
+    controlChannel_(std::move(controlChannel))
 {
     ssl_ctx_.set_default_verify_paths();
-    channel_store_.load();
 
-    // !join
-    dispatcher_.register_command(
-        "join", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
-            auto channel = msg.params[0];
-            auto user = msg.prefix;
-            auto args = msg.trailing;
-            bool is_mod = msg.is_moderator;
-            bool is_broadcaster = msg.is_broadcaster;
+    // Load channel metadata (aliases + FACEIT nicknames) from disk
+    channelStore_ = std::make_unique<ChannelStore>();
+    channelStore_->load();
 
-            // only in control channel
-            if (channel != control_channel_)
+    // Initialise API clients and command dispatcher
+    helixClient_  = std::make_unique<HelixClient>(ioc_, ssl_ctx_, clientId_, clientSecret_);
+    faceitClient_ = std::make_unique<faceit::Client>(std::move(faceitApiKey));
+    dispatcher_   = std::make_unique<CommandDispatcher>();
+
+    //
+    // Register chat commands
+    //
+
+    // -- !setnickname <alias>
+    dispatcher_->registerCommand(
+        "!setnickname",
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args,
+               const std::unordered_map<std::string_view,std::string_view>& tags)
+            -> boost::asio::awaitable<void>
+        {
+            // Only broadcaster or moderator can set an alias:
+            bool isBroadcaster = (user == channel);
+            bool isMod = false;
+            if (auto it = tags.find("mod"); it != tags.end() && it->second == "1") {
+                isMod = true;
+            }
+
+            if (!isBroadcaster && !isMod) {
                 co_return;
             }
 
-            if (!args.empty() && !is_broadcaster && !is_mod)
+            const std::string alias{args};
+            channelStore_->setAlias(channel, alias);
+            channelStore_->save();
+
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + std::string(channel)
+                + " :Alias set to " + alias);
+            co_return;
+        }
+    );
+
+    // -- !setfaceit <faceitNick>
+    dispatcher_->registerCommand(
+        "!setfaceit",
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args,
+               const std::unordered_map<std::string_view,std::string_view>& tags)
+            -> boost::asio::awaitable<void>
+        {
+            // Only broadcaster or moderator can set FACEIT nickname
+            bool isBroadcaster = (user == channel);
+            bool isMod = false;
+            if (auto it = tags.find("mod"); it != tags.end() && it->second == "1") {
+                isMod = true;
+            }
+
+            if (!isBroadcaster && !isMod) {
                 co_return;
             }
 
-            std::string_view target = args.empty() ? user : args;
+            const std::string faceitNick{args};
+            channelStore_->setFaceitNick(channel, faceitNick);
+            channelStore_->save();
 
-            if (channel_store_.contains(target)) {
-                std::array<boost::asio::const_buffer, 5> msg{
-                    {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
-                     boost::asio::buffer(" :Already in channel ", 22), boost::asio::buffer(target),
-                     boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(msg);
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + std::string(channel)
+                + " :FACEIT nickname set to " + faceitNick);
+            co_return;
+        }
+    );
+
+    // -- !join <channel>  (only allowed in controlChannel_)
+    dispatcher_->registerCommand(
+        "!join",
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args,
+               const std::unordered_map<std::string_view,std::string_view>& tags)
+            -> boost::asio::awaitable<void>
+        {
+            // Only control channel can invoke !join
+            if (channel != controlChannel_) {
                 co_return;
             }
 
-            channel_store_.add_channel(target);
-            channel_store_.save();
+            const std::string newChan = !args.empty()
+                ? std::string(args)
+                : std::string(user);
 
-            std::array<boost::asio::const_buffer, 3> join_cmd{{boost::asio::buffer("JOIN #", 6),
-                                                               boost::asio::buffer(target),
-                                                               boost::asio::buffer(CRLF)}};
-            co_await irc_client_.send_buffers(join_cmd);
+            channelStore_->addChannel(newChan);
+            channelStore_->save();
 
-            std::array<boost::asio::const_buffer, 7> ack{
-                {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
-                 boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
-                 boost::asio::buffer(" Joined ", 8), boost::asio::buffer(target),
-                 boost::asio::buffer(CRLF)}};
-            co_await irc_client_.send_buffers(ack);
-        });
+            co_await ircClient_->sendLine("JOIN #" + newChan);
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + controlChannel_ + " :Joined " + newChan);
+            co_return;
+        }
+    );
 
-    // !leave
-    dispatcher_.register_command(
-        "leave", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
-            auto channel = msg.params[0];
-            auto user = msg.prefix;
-            auto args = msg.trailing;
-            bool is_mod = msg.is_moderator;
-            bool is_broadcaster = msg.is_broadcaster;
-
-            if (channel != control_channel_)
-                co_return;
-
-            if (!args.empty() && !is_broadcaster && !is_mod)
-                co_return;
-
-            std::string_view target = args.empty() ? user : args;
-
-            if (!channel_store_.contains(target)) {
-                std::array<boost::asio::const_buffer, 5> msg{
-                    {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
-                     boost::asio::buffer(" :Not in channel ", 19), boost::asio::buffer(target),
-                     boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(msg);
+    // -- !leave <channel>  (only allowed in controlChannel_)
+    dispatcher_->registerCommand(
+        "!leave",
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args,
+               const std::unordered_map<std::string_view,std::string_view>& tags)
+            -> boost::asio::awaitable<void>
+        {
+            // Only control channel can invoke !leave
+            if (channel != controlChannel_) {
                 co_return;
             }
 
-            channel_store_.remove_channel(target);
-            channel_store_.save();
+            const std::string remChan = !args.empty()
+                ? std::string(args)
+                : std::string(user);
 
-            std::array<boost::asio::const_buffer, 3> part_cmd{{boost::asio::buffer("PART #", 6),
-                                                               boost::asio::buffer(target),
-                                                               boost::asio::buffer(CRLF)}};
-            co_await irc_client_.send_buffers(part_cmd);
+            channelStore_->removeChannel(remChan);
+            channelStore_->save();
 
-            std::array<boost::asio::const_buffer, 7> ack{
-                {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
-                 boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
-                 boost::asio::buffer(" Left ", 6), boost::asio::buffer(target),
-                 boost::asio::buffer(CRLF)}};
-            co_await irc_client_.send_buffers(ack);
-        });
+            co_await ircClient_->sendLine("PART #" + remChan);
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + controlChannel_ + " :Left " + remChan);
+            co_return;
+        }
+    );
+
+    // -- !rank (alias: !elo)
+    auto rankHandler = [this](
+            std::string_view channel,
+            std::string_view user,
+            std::string_view args,
+            const std::unordered_map<std::string_view,std::string_view>& tags
+        ) -> boost::asio::awaitable<void>
+    {
+        // Ensure FACEIT nickname is set for this channel
+        const auto optFaceit = channelStore_->getFaceitNick(channel);
+        if (!optFaceit) {
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + std::string(channel)
+                + " :No FACEIT nickname set. Use !setfaceit first.");
+            co_return;
+        }
+        const std::string faceitNick = *optFaceit;
+
+        // Query FACEIT for player data
+        bool fetchOk = true;
+        boost::json::value playerVal;
+        try {
+            playerVal = co_await faceitClient_->getPlayerByNickname(faceitNick, "cs2");
+        } catch (...) {
+            fetchOk = false;
+        }
+
+        if (!fetchOk) {
+            co_await ircClient_->sendLine(
+                "PRIVMSG #" + std::string(channel)
+                + " :Failed to fetch FACEIT rank");
+            co_return;
+        }
+
+        // Extract current Elo and compute level
+        const auto& playerObj = playerVal.as_object();
+        const int currentElo = playerObj
+            .at("games").as_object()
+            .at("cs2").as_object()
+            .at("faceit_elo").to_number<int>();
+
+        struct LevelInfo { int level, minElo, maxElo; };
+        static constexpr LevelInfo levels[] = {
+            {10, 2001, INT_MAX}, {9, 1751, 2000},     {8, 1531, 1750},
+            {7, 1351, 1530},     {6, 1201, 1350},     {5, 1051, 1200},
+            {4,  901, 1050},     {3,  751,  900},     {2,  501,  750},
+            {1,  100,  500}
+        };
+
+        int level = 1;
+        for (const auto& info : levels) {
+            if (currentElo >= info.minElo && currentElo <= info.maxElo) {
+                level = info.level;
+                break;
+            }
+        }
+
+        // Use alias if set; otherwise channel name
+        const std::string displayName = channelStore_->getAlias(channel)
+            .value_or(std::string(channel));
+
+        std::ostringstream oss;
+        oss << "PRIVMSG #" << channel << " :"
+            << displayName << " is level " << level
+            << " | " << currentElo << " Elo";
+
+        co_await ircClient_->sendLine(oss.str());
+        co_return;
+    };
+
+    dispatcher_->registerCommand("!rank", rankHandler);
+    dispatcher_->registerCommand("!elo",  rankHandler);
+
+    // -- !record [limit]
+    dispatcher_->registerCommand(
+        "!record",
+        [this](std::string_view channel,
+               std::string_view user,
+               std::string_view args,
+               const std::unordered_map<std::string_view,std::string_view>& tags)
+            -> boost::asio::awaitable<void>
+        {
+            // Check if the stream is currently live
+            const auto streamStartOpt = co_await helixClient_->getStreamStart(channel);
+            if (!streamStartOpt) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + std::string(channel) + " :Stream is offline");
+                co_return;
+            }
+
+            // Ensure FACEIT nickname is set
+            const auto optFaceit = channelStore_->getFaceitNick(channel);
+            if (!optFaceit) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + std::string(channel)
+                    + " :No FACEIT nickname set. Use !setfaceit first.");
+                co_return;
+            }
+            const std::string faceitNick = *optFaceit;
+
+            // Parse optional 'limit' parameter in [1,100], max = 100
+            int limit = 100;
+            if (!args.empty()) {
+                try {
+                    limit = std::clamp(std::stoi(std::string(args)), 1, 100);
+                } catch (...) {
+                    limit = 100;
+                }
+            }
+
+            // Fetch player info from FACEIT
+            bool fetchOk = true;
+            boost::json::value playerVal;
+            try {
+                playerVal = co_await faceitClient_->getPlayerByNickname(faceitNick, "cs2");
+            } catch (...) {
+                fetchOk = false;
+            }
+            if (!fetchOk) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + std::string(channel)
+                    + " :Failed to fetch FACEIT stats");
+                co_return;
+            }
+
+            const auto& playerObj = playerVal.as_object();
+            const std::string pid = std::string(playerObj.at("player_id").as_string());
+
+            // Calculate how long the stream has been live (in ms)
+            const auto sinceMs = streamStartOpt->started_at.count();
+
+            // Fetch recent matches since stream start
+            bool statsOk = true;
+            std::vector<boost::json::value> statsArr;
+            try {
+                statsArr = co_await faceitClient_->getPlayerStats(pid, sinceMs, std::nullopt, limit);
+            } catch (...) {
+                statsOk = false;
+            }
+            if (!statsOk) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + std::string(channel)
+                    + " :Failed to fetch match stats");
+                co_return;
+            }
+
+            // Count wins and losses
+            const int wins = static_cast<int>(
+                std::count_if(
+                    statsArr.begin(),
+                    statsArr.end(),
+                    [](auto const& match) {
+                        return match.as_object()
+                            .at("stats").as_object()
+                            .at("Result").as_string() == "1";
+                    }
+                )
+            );
+            const int losses = static_cast<int>(statsArr.size()) - wins;
+
+            // Fetch Elo history to compute Elo change
+            bool historyOk = true;
+            std::vector<boost::json::value> historyArr;
+            try {
+                historyArr = co_await faceitClient_->getEloHistory(pid, limit, 0, sinceMs, std::nullopt);
+            } catch (...) {
+                historyOk = false;
+            }
+            if (!historyOk) {
+                co_await ircClient_->sendLine(
+                    "PRIVMSG #" + std::string(channel)
+                    + " :Failed to fetch Elo history");
+                co_return;
+            }
+
+            // Sort history by date (ascending)
+            std::sort(
+                historyArr.begin(),
+                historyArr.end(),
+                [](auto const& a, auto const& b) {
+                    return a.as_object().at("date").to_number<int64_t>()
+                         < b.as_object().at("date").to_number<int64_t>();
+                }
+            );
+
+            // Compute Elo change over the stream period
+            int eloChange = 0;
+            if (historyArr.size() >= 2) {
+                const auto& first = historyArr.front().as_object();
+                const auto& last  = historyArr.back().as_object();
+                const int firstElo = std::stoi(std::string(first.at("elo").as_string()));
+                const int lastElo  = std::stoi(std::string(last.at("elo").as_string()));
+                eloChange = lastElo - firstElo;
+            }
+
+            // Extract current Elo from player object
+            const int currentElo = playerObj
+                .at("games").as_object()
+                .at("cs2").as_object()
+                .at("faceit_elo").to_number<int>();
+
+            // Build and send the summary message
+            std::ostringstream oss;
+            oss << "PRIVMSG #" << channel << " :"
+                << wins << "W/" << losses << "L ("
+                << statsArr.size() << ") | Elo " << currentElo
+                << (eloChange >= 0 ? " (+" : " (") << eloChange << ")";
+            co_await ircClient_->sendLine(oss.str());
+            co_return;
+        }
+    );
+
+    // Finally, initialise the IRC client
+    ircClient_ = std::make_unique<IrcClient>(
+        ioc_, ssl_ctx_, oauthToken_, controlChannel_);
 }
 
-TwitchBot::~TwitchBot() noexcept
-{
-    irc_client_.close();
+TwitchBot::~TwitchBot() noexcept {
+    if (ircClient_) {
+        ircClient_->close();
+    }
+    ioc_.stop();
 }
 
-void TwitchBot::add_chat_listener(chat_listener_t listener)
-{
-    dispatcher_.register_chat_listener(std::move(listener));
+void TwitchBot::addChatListener(ChatListener cb) {
+    dispatcher_->registerChatListener(std::move(cb));
 }
 
-void TwitchBot::run()
-{
-    boost::asio::co_spawn(strand_, run_bot(), boost::asio::detached);
+void TwitchBot::run() {
+    // Launch the main bot coroutine
+    boost::asio::co_spawn(
+        ioc_,
+        [this]() -> boost::asio::awaitable<void> {
+            co_await runBot();
+        },
+        boost::asio::detached
+    );
 
-    pool_.join();
+    // Run the I/O loop until explicitly stopped
+    ioc_.run();
 }
 
-boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
-{
-    // build channel list once
-    std::vector<std::string_view> channels;
-    channel_store_.channel_names(channels);
-    if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end()) {
-        channels.push_back(control_channel_);
+boost::asio::awaitable<void> TwitchBot::runBot() {
+    // Ensure controlChannel_ is always in the join list
+    auto channels = channelStore_->allChannels();
+    if (std::find(channels.begin(), channels.end(), controlChannel_) == channels.end()) {
+        channels.push_back(controlChannel_);
     }
 
+    // Connect to Twitch IRC and join channels
     try {
-        co_await irc_client_.connect(channels);
-    } catch (const std::exception &e) {
-        std::cerr << "[TwitchBot] connect error: " << e.what() << "\n";
+        co_await ircClient_->connect(channels);
+    } catch (const std::exception& e) {
+        std::cerr << "[TwitchBot] connect error: " << e.what() << '\n';
         co_return;
     }
 
-    decltype(auto) exec = co_await boost::asio::this_coro::executor;
+    const auto executor = co_await boost::asio::this_coro::executor;
 
-    // ping loop
+    // Spawn a background ping loop to keep the connection alive
     boost::asio::co_spawn(
-        exec,
-        [this]() noexcept -> boost::asio::awaitable<void> { co_await irc_client_.ping_loop(); },
-        boost::asio::detached);
-
-    // read + dispatch loop
-    boost::asio::co_spawn(
-        exec,
-        [this]() noexcept -> boost::asio::awaitable<void> {
-            co_await irc_client_.read_loop([this](std::string_view raw) {
-                std::cout << "[IRC] " << raw << '\n';
-                auto msg = parse_irc_line(raw);
-                dispatcher_.dispatch(msg);
-            });
+        executor,
+        [this]() -> boost::asio::awaitable<void> {
+            co_await ircClient_->pingLoop();
         },
-        boost::asio::detached);
+        boost::asio::detached
+    );
 
-    // idle forever
-    boost::asio::steady_timer idle{pool_};
+    // Spawn a background read loop to process incoming IRC messages
+    boost::asio::co_spawn(
+        executor,
+        [this]() -> boost::asio::awaitable<void> {
+            co_await ircClient_->readLoop(
+                [this](std::string_view rawLine) {
+                    // Log raw IRC data for debugging
+                    std::cout << "[IRC] " << rawLine << '\n';
+                    const auto msg = parseIrcLine(rawLine);
+                    boost::asio::co_spawn(
+                        ioc_,
+                        dispatcher_->dispatch(msg),
+                        boost::asio::detached
+                    );
+                }
+            );
+        },
+        boost::asio::detached
+    );
+
+    // Prevent runBot() from returning by idling indefinitely
+    boost::asio::steady_timer idle{ioc_};
     idle.expires_at(std::chrono::steady_clock::time_point::max());
     co_await idle.async_wait(boost::asio::use_awaitable);
 }
