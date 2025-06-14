@@ -1,20 +1,23 @@
 ﻿#pragma once
 
-#include "command_dispatcher.hpp"
-#include "irc_client.hpp"
-#include "helix_client.hpp"
-#include "channel_store.hpp"
-
+// C++ Standard Library
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include <boost/asio/awaitable.hpp>
+// 3rd-party
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/ssl/context.hpp>
+
+// Project
+#include "command_dispatcher.hpp"
+#include "irc_client.hpp"
+#include "helix_client.hpp"
+#include "channel_store.hpp"
 
 namespace twitch_bot {
 

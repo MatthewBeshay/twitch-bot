@@ -12,9 +12,10 @@
 #include <boost/asio/awaitable.hpp>
 
 // Project
-#include "message_parser.hpp"
 #include "utils/transparent_string.hpp"
 #include "utils/attributes.hpp"
+
+#include "message_parser.hpp"
 
 namespace twitch_bot {
 

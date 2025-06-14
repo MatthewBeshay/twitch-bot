@@ -1,12 +1,16 @@
-#include "helix_client.hpp"
-#include "utils/attributes.hpp"
-
+// C++ Standard Library
 #include <array>
 #include <system_error>
 
+// 3rd-party
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/beast/version.hpp>
 #include <openssl/ssl.h>
+
+// Project
+#include "utils/attributes.hpp"
+
+#include "helix_client.hpp"
 
 namespace twitch_bot {
 namespace detail {

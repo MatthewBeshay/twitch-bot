@@ -1,8 +1,8 @@
-﻿#include "http_client.hpp"
-
+﻿// C++ Standard Library
 #include <chrono>
 #include <system_error>
 
+// 3rd-party
 #include <boost/asio/connect.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -12,6 +12,9 @@
 #include <boost/beast/version.hpp>
 
 #include <openssl/ssl.h>
+
+// Project
+#include "http_client.hpp"
 
 namespace http_client {
 namespace detail {

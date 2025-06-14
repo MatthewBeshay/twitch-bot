@@ -1,8 +1,6 @@
 #pragma once
 
-#include "utils/transparent_string.hpp"
-#include "utils/attributes.hpp"
-
+// C++ Standard Library
 #include <atomic>
 #include <filesystem>
 #include <optional>
@@ -12,10 +10,15 @@
 #include <unordered_map>
 #include <vector>
 
+// 3rd-party
 #include <boost/asio.hpp>
 #include <boost/asio/steady_timer.hpp>
 
 #include <toml++/toml.hpp>
+
+// Project
+#include "utils/transparent_string.hpp"
+#include "utils/attributes.hpp"
 
 namespace twitch_bot {
 

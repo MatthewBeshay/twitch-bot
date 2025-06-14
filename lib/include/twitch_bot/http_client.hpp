@@ -1,8 +1,6 @@
 ﻿#pragma once
 
-#include "utils/transparent_string.hpp"
-#include "utils/attributes.hpp"
-
+// C++ Standard Library
 #include <string>
 #include <string_view>
 #include <span>
@@ -10,8 +8,9 @@
 #include <vector>
 #include <memory_resource>
 
-#include <boost/asio/awaitable.hpp>
+// 3rd-party
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/strand.hpp>
@@ -19,6 +18,10 @@
 #include <boost/beast/http.hpp>
 
 #include <glaze/json.hpp>
+
+// Project
+#include "utils/transparent_string.hpp"
+#include "utils/attributes.hpp"
 
 namespace http_client {
 

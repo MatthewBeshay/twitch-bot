@@ -1,17 +1,21 @@
 #pragma once
 
-#include "http_client.hpp"
-#include "utils/attributes.hpp"
-
+// C++ Standard Library
 #include <chrono>
 #include <optional>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
 
+// 3rd-party
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ssl/context.hpp>
+
+// Project
+#include "utils/attributes.hpp"
+
+#include "http_client.hpp"
 
 
 namespace twitch_bot {

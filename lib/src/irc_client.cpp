@@ -1,7 +1,7 @@
-﻿#include "irc_client.hpp"
-
+﻿// C++ Standard Library
 #include <iostream>
 
+// 3rd-party
 #include <boost/asio/connect.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/post.hpp>
@@ -13,6 +13,9 @@
 #include <boost/system/error_code.hpp>
 
 #include <openssl/ssl.h>
+
+// Project
+#include "irc_client.hpp"
 
 namespace twitch_bot {
 

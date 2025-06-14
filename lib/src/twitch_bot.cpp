@@ -1,14 +1,17 @@
-﻿#include "twitch_bot.hpp"
-#include "message_parser.hpp"
-
+﻿// C++ Standard Library
 #include <array>
 #include <iostream>
 #include <span>
 
+// 3rd-party
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/steady_timer.hpp>
+
+// Project
+#include "twitch_bot.hpp"
+#include "message_parser.hpp"
 
 namespace twitch_bot {
 

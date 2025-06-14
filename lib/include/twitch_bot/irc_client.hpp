@@ -1,14 +1,14 @@
 ﻿#pragma once
 
-#include "utils/attributes.hpp"
-
+// C++ Standard Library
 #include <array>
 #include <span>
 #include <string>
 #include <string_view>
 
-#include <boost/asio/any_io_executor.hpp>
+// 3rd-party
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl/context.hpp>
@@ -20,6 +20,9 @@
 #include <boost/beast/core/static_buffer.hpp>
 #include <boost/beast/websocket/ssl.hpp>
 #include <boost/beast/websocket/stream.hpp>
+
+// Project
+#include "utils/attributes.hpp"
 
 namespace twitch_bot {
 

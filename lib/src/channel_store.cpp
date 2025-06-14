@@ -1,9 +1,11 @@
-#include "channel_store.hpp"
-
+// C++ Standard Library
 #include <fstream>
 #include <future>
 #include <iostream>
 #include <system_error>
+
+// Project
+#include "channel_store.hpp"
 
 namespace twitch_bot {
 

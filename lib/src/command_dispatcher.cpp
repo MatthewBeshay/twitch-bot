@@ -1,9 +1,12 @@
-#include "command_dispatcher.hpp"
-
+// C++ Standard Library
 #include <iostream>
 
+// 3rd-party
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+
+// Project
+#include "command_dispatcher.hpp"
 
 namespace twitch_bot {
 
