@@ -39,10 +39,9 @@ add_custom_target(format
   COMMAND clang-format -i --style=file
           ${CMAKE_SOURCE_DIR}/lib/src/*.cpp
           ${CMAKE_SOURCE_DIR}/lib/include/*.hpp
+          ${CMAKE_SOURCE_DIR}/lib/utils/*.hpp
           ${CMAKE_SOURCE_DIR}/app/*.cpp
           ${CMAKE_SOURCE_DIR}/app/*.hpp
-          ${CMAKE_SOURCE_DIR}/include/*.h
-          ${CMAKE_SOURCE_DIR}/include/*.hpp
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 
