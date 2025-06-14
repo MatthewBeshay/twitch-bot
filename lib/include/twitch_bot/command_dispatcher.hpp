@@ -1,6 +1,7 @@
+// command_dispatcher.hpp
 #pragma once
 
-#include "message_parser.hpp"
+#include "message_parser.hpp"  // Defines IrcMessage
 #include "utils/transparent_string.hpp"
 
 #include <functional>
@@ -18,11 +19,13 @@ using ChatListener = std::function<void(std::string_view channel,
                                         std::string_view user,
                                         std::string_view message)>;
 
-/// Called when a registered command (e.g. "!join") is invoked. Returns awaitable<void>.
+/// Called when a registered command (e.g. "!join") is invoked.
+/// The `tags` map contains IRC tags from the incoming message.
 using CommandHandler = std::function<
-    boost::asio::awaitable<void>(std::string_view channel,
-                                  std::string_view user,
-                                  std::string_view args)>;
+    boost::asio::awaitable<void>(std::string_view                                         channel,
+                                  std::string_view                                         user,
+                                  std::string_view                                         args,
+                                  const std::unordered_map<std::string_view,std::string_view>& tags)>;
 
 /**
  * @brief CommandDispatcher inspects each IrcMessage. If it's a PRIVMSG and the
@@ -40,14 +43,13 @@ public:
 
     /**
      * @brief Register a handler for a specific command (including leading '!').
-     *        Example: registerCommand("!join", [](auto ch, auto user, auto args){...});
+     *        Example: registerCommand("!join", [](auto ch, auto user, auto args, auto& tags){ ... });
      *
      * @param cmd      The command name (with leading '!'), e.g. "!join".
      * @param handler  The coroutine to invoke when that command is seen.
      */
     void registerCommand(std::string_view cmd, CommandHandler handler) {
-        // Note: we store a std::string(cmd) as the key,
-        // but the map is heterogeneous so lookup from string_view is zero-overhead.
+        // We store std::string(cmd) as the key; heterogeneous lookup is enabled.
         commandMap_.emplace(std::string(cmd), std::move(handler));
     }
 
@@ -63,7 +65,8 @@ public:
     /**
      * @brief Dispatch a parsed IrcMessage. If it's PRIVMSG and starts with '!',
      *        split into command + args, look up a handler (via heterogeneous lookup),
-     *        and co_await it. Otherwise, call all ChatListener callbacks.
+     *        and co_await it (passing along msg.tags). Otherwise, call all
+     *        ChatListener callbacks.
      *
      * @param msg  An IrcMessage (tags/prefix/command/params/trailing) parsed earlier.
      */
@@ -71,8 +74,7 @@ public:
 
 private:
     // Store commands in an unordered_map keyed by std::string,
-    // but allow lookup by std::string_view, const char*, etc.
-    // TransparentStringHash/TransparentStringEq enable zero-overhead heterogeneous lookup.
+    // but allow lookup by std::string_view without allocations.
     std::unordered_map<
         std::string,
         CommandHandler,
