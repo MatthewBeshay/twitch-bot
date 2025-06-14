@@ -165,7 +165,7 @@ boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
         co_return;
     }
 
-    auto exec = co_await boost::asio::this_coro::executor;
+    decltype(auto) exec = co_await boost::asio::this_coro::executor;
 
     // ping loop
     boost::asio::co_spawn(
