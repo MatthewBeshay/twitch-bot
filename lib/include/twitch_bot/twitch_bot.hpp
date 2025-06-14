@@ -10,8 +10,10 @@
 // 3rd-party
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/strand.hpp>
+#include <boost/asio/thread_pool.hpp>
 
 // Project
 #include "channel_store.hpp"
@@ -48,7 +50,8 @@ private:
     boost::asio::awaitable<void> run_bot() noexcept;
 
     static constexpr std::string_view CRLF{"\r\n"};
-    boost::asio::io_context ioc_;
+
+    boost::asio::thread_pool pool_;
     boost::asio::strand<boost::asio::any_io_executor> strand_;
     boost::asio::ssl::context ssl_ctx_;
 
@@ -61,9 +64,6 @@ private:
     CommandDispatcher dispatcher_;
     HelixClient helix_client_;
     ChannelStore channel_store_;
-
-    const std::size_t thread_count_;
-    std::vector<std::thread> threads_;
 };
 
 } // namespace twitch_bot

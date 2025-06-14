@@ -78,7 +78,7 @@ private:
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::strand<boost::asio::any_io_executor> strand_;
     std::unordered_map<std::string,
-                       std::vector<std::shared_ptr<connection>>,
+                       std::pmr::vector<std::shared_ptr<connection>>,
                        TransparentStringHash,
                        TransparentStringEq>
         pool_;

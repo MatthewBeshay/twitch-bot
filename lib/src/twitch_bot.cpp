@@ -20,8 +20,8 @@ TwitchBot::TwitchBot(std::string oauth_token,
                      std::string client_secret,
                      std::string control_channel,
                      std::size_t threads)
-    : ioc_{static_cast<int>(threads > 0 ? threads : 1)}
-    , strand_{ioc_.get_executor()}
+    : pool_{threads > 0 ? threads : 1}
+    , strand_{pool_.get_executor()}
     , ssl_ctx_{boost::asio::ssl::context::tlsv12_client}
     , oauth_token_{std::move(oauth_token)}
     , client_id_{std::move(client_id)}
@@ -31,7 +31,6 @@ TwitchBot::TwitchBot(std::string oauth_token,
     , dispatcher_{strand_}
     , helix_client_{strand_, ssl_ctx_, client_id_, client_secret_}
     , channel_store_{strand_}
-    , thread_count_{threads > 0 ? threads : 1}
 {
     ssl_ctx_.set_default_verify_paths();
     channel_store_.load();
@@ -125,7 +124,6 @@ TwitchBot::TwitchBot(std::string oauth_token,
 TwitchBot::~TwitchBot() noexcept
 {
     irc_client_.close();
-    ioc_.stop();
 }
 
 void TwitchBot::add_chat_listener(chat_listener_t listener)
@@ -137,16 +135,7 @@ void TwitchBot::run()
 {
     boost::asio::co_spawn(strand_, run_bot(), boost::asio::detached);
 
-    threads_.reserve(thread_count_ - 1);
-    for (std::size_t i = 1; i < thread_count_; ++i) {
-        threads_.emplace_back([this] { ioc_.run(); });
-    }
-
-    ioc_.run();
-
-    for (auto &t : threads_)
-        if (t.joinable())
-            t.join();
+    pool_.join();
 }
 
 boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
@@ -186,7 +175,7 @@ boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
         boost::asio::detached);
 
     // idle forever
-    boost::asio::steady_timer idle{ioc_};
+    boost::asio::steady_timer idle{pool_};
     idle.expires_at(std::chrono::steady_clock::time_point::max());
     co_await idle.async_wait(boost::asio::use_awaitable);
 }
