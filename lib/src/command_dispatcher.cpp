@@ -10,69 +10,70 @@ namespace twitch_bot {
 CommandDispatcher::CommandDispatcher(boost::asio::any_io_executor executor) noexcept
   : executor_(std::move(executor))
 {
-    commands_.reserve(16);
-    chat_listeners_.reserve(4);
+  commands_.reserve(16);
+  chat_listeners_.reserve(4);
 }
 
-void CommandDispatcher::registerCommand(std::string_view command,
-                                        CommandHandler  handler) noexcept
+void CommandDispatcher::register_command(std::string_view command,
+                                         command_handler_t handler) noexcept
 {
-    commands_.emplace(std::string{command}, std::move(handler));
+  commands_.try_emplace(std::string{command}, std::move(handler));
 }
 
-void CommandDispatcher::registerChatListener(ChatListener listener) noexcept
+void CommandDispatcher::register_chat_listener(chat_listener_t listener) noexcept
 {
-    chat_listeners_.push_back(std::move(listener));
+  chat_listeners_.push_back(std::move(listener));
 }
 
-void CommandDispatcher::dispatch(const IrcMessage& message) noexcept
+void CommandDispatcher::dispatch(IrcMessage msg) noexcept
 {
-    // Fast-reject non-PRIVMSG or missing params
-    if (message.command != "PRIVMSG" ||
-        message.param_count < 1)
-    {
-        return;
-    }
+  // ignore non-PRIVMSG or missing parameters
+  if (msg.command != "PRIVMSG" || msg.param_count < 1) {
+    return;
+  }
 
-    // Normalize channel and extract user
-    auto const channel = normalizeChannel(message.params[0]);
-    auto const user    = extractUser(message.prefix);
+  // extract channel and user
+  std::string_view channel = normalize_channel(msg.params[0]);
+  std::string_view user    = extract_user(msg.prefix);
+  std::string_view text    = msg.trailing;
 
-    // Check for '!' to decide between command vs chat
-    auto const text = message.trailing;
-    if (!text.empty() && text.front() == '!') {
-        // Inline split
-        std::string_view cmdName, args;
-        splitCommand(text, cmdName, args);
+  // handle commands prefixed with '!'
+  if (!text.empty() && text.front() == '!') {
+    std::string_view cmd_name;
+    std::string_view args;
+    split_command(text, cmd_name, args);
 
-        // Transparent lookup (no allocations on find)
-        if (auto it = commands_.find(cmdName);
-            it != commands_.end())
+    auto it = commands_.find(cmd_name);
+    if (it != commands_.end()) {
+      // prepare message for handler
+      IrcMessage cmd_msg = msg;
+      cmd_msg.command    = cmd_name;
+      cmd_msg.params[0]  = channel;
+      cmd_msg.prefix     = user;
+      cmd_msg.trailing   = args;
+
+      auto handler = it->second;
+      boost::asio::co_spawn(
+        executor_,
+        [handler, cmd_msg = std::move(cmd_msg)]() mutable
+          -> boost::asio::awaitable<void>
         {
-            bool const isMod = message.is_moderator;
-            auto const handler = it->second;
-
-            boost::asio::co_spawn(
-                executor_,
-                [handler, channel, user, args, isMod, cmdName]() 
-                -> boost::asio::awaitable<void>
-                {
-                    try {
-                        co_await handler(channel, user, args, isMod);
-                    } catch (std::exception const& e) {
-                        std::cerr << "[Dispatcher] '" << cmdName
-                                  << "' threw: " << e.what() << "\n";
-                    }
-                },
-                boost::asio::detached);
-            return;
-        }
+          try {
+            co_await handler(cmd_msg);
+          } catch (std::exception const& e) {
+            std::cerr << "[dispatcher] '" << cmd_msg.command
+                      << "' threw: " << e.what() << "\n";
+          }
+        },
+        boost::asio::detached);
+      return;
     }
+  }
 
-    // Fallback: regular chat listeners
-    for (auto const& listener : chat_listeners_) {
-        listener(channel, user, text);
-    }
+  // notify chat listeners
+  for (auto const& listener : chat_listeners_) {
+    listener(channel, user, text);
+  }
 }
 
-} // namespace twitch_bot
+}  // namespace twitch_bot

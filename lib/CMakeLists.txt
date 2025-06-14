@@ -3,10 +3,11 @@
 # ------------------------------------------------------------------------------
 
 # -- Find third-party packages (via vcpkg manifest mode) -----------------------
-find_package(Boost        REQUIRED COMPONENTS asio beast)
-find_package(OpenSSL      REQUIRED)
-find_package(tomlplusplus CONFIG REQUIRED)
-find_package(glaze        CONFIG REQUIRED)
+find_package(Boost         REQUIRED COMPONENTS asio beast)
+find_package(OpenSSL       REQUIRED)
+find_package(tomlplusplus  CONFIG REQUIRED)
+find_package(glaze         CONFIG REQUIRED)
+find_package(Microsoft.GSL CONFIG REQUIRED)
 
 # -- Gather all public headers (for IDE grouping only) -------------------------
 file(GLOB_RECURSE TB_HEADERS
@@ -77,6 +78,7 @@ target_link_libraries(TwitchBotCore
     OpenSSL::SSL
     tomlplusplus::tomlplusplus
     glaze::glaze
+    Microsoft.GSL::GSL
 )
 
 # -- Create an alias so downstream code can just do `TwitchBot::Core` -----------

@@ -34,17 +34,18 @@ TwitchBot::TwitchBot(std::string     oauth_token,
     channel_store_.load();
 
     // !join
-    dispatcher_.registerCommand(
+    dispatcher_.register_command(
         "join",
-        [this](std::string_view channel,
-               std::string_view user,
-               std::string_view args,
-               bool             is_mod) noexcept -> boost::asio::awaitable<void>
-        {
+        [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
+            auto channel = msg.params[0];
+            auto user = msg.prefix;
+            auto args = msg.trailing;
+            bool is_mod = msg.is_moderator;
+            bool is_broadcaster = msg.is_broadcaster;
+
             // only in control channel
             if (channel != control_channel_) co_return;
 
-            bool is_broadcaster = user == channel;
             if (!args.empty() && !is_broadcaster && !is_mod) co_return;
 
             std::string_view target = args.empty() ? user : args;
@@ -85,16 +86,17 @@ TwitchBot::TwitchBot(std::string     oauth_token,
         });
 
     // !leave
-    dispatcher_.registerCommand(
+    dispatcher_.register_command(
         "leave",
-        [this](std::string_view channel,
-               std::string_view user,
-               std::string_view args,
-               bool             is_mod) noexcept -> boost::asio::awaitable<void>
-        {
+        [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
+            auto channel = msg.params[0];
+            auto user = msg.prefix;
+            auto args = msg.trailing;
+            bool is_mod = msg.is_moderator;
+            bool is_broadcaster = msg.is_broadcaster;
+
             if (channel != control_channel_) co_return;
 
-            bool is_broadcaster = user == channel;
             if (!args.empty() && !is_broadcaster && !is_mod) co_return;
 
             std::string_view target = args.empty() ? user : args;
@@ -141,9 +143,9 @@ TwitchBot::~TwitchBot() noexcept
     ioc_.stop();
 }
 
-void TwitchBot::add_chat_listener(ChatListener listener)
+void TwitchBot::add_chat_listener(chat_listener_t listener)
 {
-    dispatcher_.registerChatListener(std::move(listener));
+    dispatcher_.register_chat_listener(std::move(listener));
 }
 
 void TwitchBot::run()

@@ -39,7 +39,7 @@ public:
     void run();
 
     /// Add a callback for every non-command chat message.
-    void add_chat_listener(ChatListener listener);
+    void add_chat_listener(chat_listener_t listener);
 
 private:
     boost::asio::awaitable<void> run_bot() noexcept;
