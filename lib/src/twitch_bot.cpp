@@ -47,9 +47,11 @@ TwitchBot::TwitchBot(std::string oauth_token,
             // only in control channel
             if (channel != control_channel_)
                 co_return;
+            }
 
             if (!args.empty() && !is_broadcaster && !is_mod)
                 co_return;
+            }
 
             std::string_view target = args.empty() ? user : args;
 
