@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15...4.0)
+cmake_minimum_required(VERSION 4.0)
 project(TwitchBot VERSION 0.1.0 DESCRIPTION "Twitch chat bot" LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -10,7 +10,9 @@ set(MY_TIDY_CHECKS
   modernize-*,
   readability-*
 )
+
 set(MY_TIDY_HEADER_FILTER "^(app|lib/src|lib/include/(twitch_bot|utils))/")
+
 set(CMAKE_CXX_CLANG_TIDY
   clang-tidy;
   -checks=${MY_TIDY_CHECKS};
