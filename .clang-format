@@ -1,0 +1,47 @@
+# .clang-format
+
+BasedOnStyle: WebKit
+
+# Indentation settings.
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# Maximum line length.
+ColumnLimit: 100
+
+# K&R‐derived brace style.
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterClass: true
+  AfterControlStatement: false
+
+# Parameter and initializer wrapping.
+AlignAfterOpenBracket: Align
+BinPackParameters: false
+AllowAllParametersOfDeclarationOnNextLine: false
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+BreakConstructorInitializers: BeforeComma
+ConstructorInitializerIndentWidth: 4
+
+# Disallow short one‐line statements.
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: false
+
+# Derive pointer and reference alignment from base style.
+DerivePointerAlignment: true
+
+# Spacing rules.
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInContainerLiterals: false
+SpaceBeforeCpp11BracedList: false
+Cpp11BracedListStyle: true
+
+# Preserve at most one consecutive empty line.
+MaxEmptyLinesToKeep: 1
+
+# Optional experimental wrapping behaviour.
+ExperimentalAutoDetectBinPacking: true

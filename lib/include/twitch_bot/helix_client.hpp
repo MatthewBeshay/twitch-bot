@@ -17,16 +17,14 @@
 
 #include "http_client.hpp"
 
-
 namespace twitch_bot {
 
 /// JSON from Helix API.
 using json = glz::json_t;
 
 /// Data returned when channel goes live.
-struct stream_start_result
-{
-    bool                      is_live;    ///< true if channel is live
+struct stream_start_result {
+    bool is_live; ///< true if channel is live
     std::chrono::milliseconds start_time; ///< ms since UNIX epoch when live
 };
 
@@ -37,17 +35,16 @@ class HelixClient
 public:
     /// Construct client.
     HelixClient(boost::asio::any_io_executor executor,
-                 boost::asio::ssl::context&   ssl_ctx,
-                 std::string_view             client_id,
-                 std::string_view             client_secret) noexcept;
+                boost::asio::ssl::context &ssl_ctx,
+                std::string_view client_id,
+                std::string_view client_secret) noexcept;
 
-    HelixClient(const HelixClient&)            = delete;
-    HelixClient& operator=(const HelixClient&) = delete;
-    ~HelixClient()                              = default;
+    HelixClient(const HelixClient &) = delete;
+    HelixClient &operator=(const HelixClient &) = delete;
+    ~HelixClient() = default;
 
     /// Ensure valid OAuth2 token.
-    boost::asio::awaitable<void>
-    ensure_token() noexcept;
+    boost::asio::awaitable<void> ensure_token() noexcept;
 
     /// Get stream start for given channel.
     boost::asio::awaitable<std::optional<stream_start_result>>
@@ -55,8 +52,7 @@ public:
 
 private:
     /// Parse ISO-8601 "YYYY-MM-DDThh:mm:ssZ" to ms since epoch.
-    TB_FORCE_INLINE static 
-    std::optional<std::chrono::milliseconds>
+    TB_FORCE_INLINE static std::optional<std::chrono::milliseconds>
     parse_iso8601_ms(std::string_view timestamp) noexcept;
 
     // Prebuilt buffers
@@ -66,15 +62,15 @@ private:
 
     // Asio executor and HTTP client
     boost::asio::any_io_executor executor_;
-    http_client::client          http_client_;
+    http_client::client http_client_;
 
     // Application credentials
     const std::string client_id_;
     const std::string client_secret_;
 
-    mutable std::shared_mutex       token_mutex_;
-    std::string                     token_;
+    mutable std::shared_mutex token_mutex_;
+    std::string token_;
     std::chrono::steady_clock::time_point token_expiry_;
 };
 
-}   // namespace twitch_bot
+} // namespace twitch_bot

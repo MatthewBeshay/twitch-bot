@@ -8,16 +8,16 @@
 #include <vector>
 
 // 3rd-party
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/strand.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl/context.hpp>
+#include <boost/asio/strand.hpp>
 
 // Project
-#include "command_dispatcher.hpp"
-#include "irc_client.hpp"
-#include "helix_client.hpp"
 #include "channel_store.hpp"
+#include "command_dispatcher.hpp"
+#include "helix_client.hpp"
+#include "irc_client.hpp"
 
 namespace twitch_bot {
 
@@ -27,16 +27,16 @@ class TwitchBot
 {
 public:
     /// @pre oauth_token, client_id, client_secret and control_channel are non-empty.
-    explicit TwitchBot(std::string        oauth_token,
-                       std::string        client_id,
-                       std::string        client_secret,
-                       std::string        control_channel,
-                       std::size_t        threads = std::thread::hardware_concurrency());
+    explicit TwitchBot(std::string oauth_token,
+                       std::string client_id,
+                       std::string client_secret,
+                       std::string control_channel,
+                       std::size_t threads = std::thread::hardware_concurrency());
 
     ~TwitchBot() noexcept;
 
-    TwitchBot(const TwitchBot&)            = delete;
-    TwitchBot& operator=(const TwitchBot&) = delete;
+    TwitchBot(const TwitchBot &) = delete;
+    TwitchBot &operator=(const TwitchBot &) = delete;
 
     /// Start the bot and block until stopped.
     void run();
@@ -48,24 +48,22 @@ private:
     boost::asio::awaitable<void> run_bot() noexcept;
 
     static constexpr std::string_view CRLF{"\r\n"};
+    boost::asio::io_context ioc_;
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
+    boost::asio::ssl::context ssl_ctx_;
 
-    boost::asio::io_context         ioc_;
-    boost::asio::strand<
-      boost::asio::any_io_executor> strand_;
-    boost::asio::ssl::context       ssl_ctx_;
+    const std::string oauth_token_;
+    const std::string client_id_;
+    const std::string client_secret_;
+    const std::string control_channel_;
 
-    const std::string               oauth_token_;
-    const std::string               client_id_;
-    const std::string               client_secret_;
-    const std::string               control_channel_;
+    IrcClient irc_client_;
+    CommandDispatcher dispatcher_;
+    HelixClient helix_client_;
+    ChannelStore channel_store_;
 
-    IrcClient                       irc_client_;
-    CommandDispatcher               dispatcher_;
-    HelixClient                     helix_client_;
-    ChannelStore                    channel_store_;
-
-    const std::size_t               thread_count_;
-    std::vector<std::thread>        threads_;
+    const std::size_t thread_count_;
+    std::vector<std::thread> threads_;
 };
 
 } // namespace twitch_bot

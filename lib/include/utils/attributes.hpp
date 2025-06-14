@@ -15,12 +15,12 @@
 //   - GCC/Clang: __restrict__
 //   - Others: (empty)
 #if defined(_MSC_VER)
-#  define TB_FORCE_INLINE __forceinline
-#  define TB_RESTRICT     __restrict
+#define TB_FORCE_INLINE __forceinline
+#define TB_RESTRICT __restrict
 #elif defined(__GNUC__) || defined(__clang__)
-#  define TB_FORCE_INLINE inline __attribute__((always_inline))
-#  define TB_RESTRICT     __restrict__
+#define TB_FORCE_INLINE inline __attribute__((always_inline))
+#define TB_RESTRICT __restrict__
 #else
-#  define TB_FORCE_INLINE inline
-#  define TB_RESTRICT
+#define TB_FORCE_INLINE inline
+#define TB_RESTRICT
 #endif

@@ -1,0 +1,48 @@
+# .clang-tidy
+
+Checks: >
+  clang-diagnostic-*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*,
+  readability-identifier-naming,
+  -llvm-header-guard,
+  -modernize-use-trailing-return-type,
+  -misc-unused-parameters,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -misc-use-anonymous-namespace,
+  -misc-include-cleaner
+
+WarningsAsErrors: 'modernize-use-nullptr'
+
+HeaderFilterRegex: '^(app|lib/src|lib/include/(twitch_bot|utils))/'
+
+FormatStyle: file
+
+CheckOptions:
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.MemberCase
+    value: lower_case
+  - key: readability-identifier-naming.MemberPrefix
+    value: m_
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.UnionCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.MacroCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.IgnoreMainLikeFunctions
+    value: '1'
+  - key: readability-redundant-member-init.IgnoreBaseInCopyConstructors
+    value: '1'
+  - key: modernize-use-default-member-init.UseAssignment
+    value: '1'

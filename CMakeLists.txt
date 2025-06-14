@@ -1,45 +1,54 @@
-# -------------------------------------------------------------------------------
-# CMakeLists.txt (project root)
-# -------------------------------------------------------------------------------
-cmake_minimum_required(VERSION 4.0)
-project(
-  TwitchBot
-  VERSION 0.1.0
-  LANGUAGES CXX
+cmake_minimum_required(VERSION 3.15...4.0)
+project(TwitchBot VERSION 0.1.0 DESCRIPTION "Twitch chat bot" LANGUAGES CXX)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(MY_TIDY_CHECKS
+  clang-diagnostic-*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*
+)
+set(MY_TIDY_HEADER_FILTER "^(app|lib/src|lib/include/(twitch_bot|utils))/")
+set(CMAKE_CXX_CLANG_TIDY
+  clang-tidy;
+  -checks=${MY_TIDY_CHECKS};
+  -warnings-as-errors=modernize-use-nullptr;
+  -header-filter=${MY_TIDY_HEADER_FILTER};
+  -system-headers=false;
+  -format-style=file
 )
 
-#-------------------------------------------------------------------------------
-# If vcpkg manifest detected, load it
-#-------------------------------------------------------------------------------
-if (NOT DEFINED CMAKE_TOOLCHAIN_FILE AND
-    EXISTS "${CMAKE_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake")
+if (NOT DEFINED CMAKE_TOOLCHAIN_FILE
+    AND EXISTS "${CMAKE_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake")
   set(CMAKE_TOOLCHAIN_FILE
       "${CMAKE_SOURCE_DIR}/external/vcpkg/scripts/buildsystems/vcpkg.cmake"
-      CACHE STRING "Path to vcpkg toolchain file" FORCE)
+      CACHE STRING "" FORCE)
 endif()
 
-#-------------------------------------------------------------------------------
-# Enforce C++23, no compiler extensions
-#-------------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD      23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS    OFF)
 
-#-------------------------------------------------------------------------------
-# On MSVC, enable the standard-conformant preprocessor
-#-------------------------------------------------------------------------------
 if (MSVC)
   add_compile_options(/Zc:preprocessor)
 endif()
 
-#-------------------------------------------------------------------------------
-# Subdirectories
-#-------------------------------------------------------------------------------
+add_custom_target(format
+  COMMAND clang-format -i --style=file
+          ${CMAKE_SOURCE_DIR}/lib/src/*.cpp
+          ${CMAKE_SOURCE_DIR}/lib/include/*.hpp
+          ${CMAKE_SOURCE_DIR}/app/*.cpp
+          ${CMAKE_SOURCE_DIR}/app/*.hpp
+          ${CMAKE_SOURCE_DIR}/include/*.h
+          ${CMAKE_SOURCE_DIR}/include/*.hpp
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+
 add_subdirectory(lib)
 add_subdirectory(app)
 
 if (MSVC)
-  set_property(
-    DIRECTORY PROPERTY VS_STARTUP_PROJECT TwitchBotApp
-  )
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT TwitchBotApp)
 endif()
