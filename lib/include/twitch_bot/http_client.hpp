@@ -83,7 +83,7 @@ private:
                        TransparentStringEq>
         pool_;
     /// Internal memory resource used for handler allocators.
-    /// Mutable so get_allocator() can be const – safe, no observable state change.
+    /// Mutable so get_allocator() can be const - safe, no observable state change.
     mutable std::pmr::monotonic_buffer_resource handler_buffer_;
     const std::size_t expected_conns_per_host_;
 };

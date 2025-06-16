@@ -1,4 +1,4 @@
-# app/CMakeLists.txt — TwitchBotApp
+# app/CMakeLists.txt - TwitchBotApp
 
 add_executable(TwitchBotApp main.cpp)
 

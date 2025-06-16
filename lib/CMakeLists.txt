@@ -1,4 +1,4 @@
-# lib/CMakeLists.txt — TwitchBotCore
+# lib/CMakeLists.txt - TwitchBotCore
 
 add_library(TwitchBotCore
   src/channel_store.cpp

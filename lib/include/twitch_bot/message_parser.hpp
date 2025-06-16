@@ -39,7 +39,7 @@ struct IrcMessage {
     // True if the broadcaster badge was present.
     uint8_t is_broadcaster : 1;
 
-    // Raw tag block, e.g. "mod=1;badges=…".
+    // Raw tag block, e.g. "mod=1;badges=...".
     std::string_view raw_tags;
 
     // Server or user prefix (without leading ':').

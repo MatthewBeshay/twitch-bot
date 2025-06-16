@@ -1,6 +1,6 @@
 #pragma once
 
-// Attribute macros for cross-platform “always inline” and aliasing hints.
+// Attribute macros for cross-platform "always inline" and aliasing hints.
 // Uses compiler-specific keywords to help the optimizer.
 
 // TB_FORCE_INLINE:
