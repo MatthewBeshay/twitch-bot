@@ -28,6 +28,17 @@ void CommandDispatcher::register_chat_listener(chat_listener_t listener) noexcep
     chat_listeners_.push_back(std::move(listener));
 }
 
+template <typename Handler>
+boost::asio::awaitable<void> invoke_command(Handler handler, IrcMessage msg)
+{
+    try {
+        // co_await the real handler, moving msg into the coroutine frame
+        co_await handler(std::move(msg));
+    } catch (std::exception const &e) {
+        std::cerr << "[dispatcher] '" << msg.command << "' threw: " << e.what() << "\n";
+    }
+}
+
 void CommandDispatcher::dispatch(IrcMessage msg) noexcept
 {
     // ignore non-PRIVMSG or missing parameters
@@ -55,18 +66,8 @@ void CommandDispatcher::dispatch(IrcMessage msg) noexcept
             cmd_msg.prefix = user;
             cmd_msg.trailing = args;
 
-            auto handler = it->second;
             boost::asio::co_spawn(
-                executor_,
-                [handler, cmd_msg = std::move(cmd_msg)]() mutable -> boost::asio::awaitable<void> {
-                    try {
-                        co_await handler(cmd_msg);
-                    } catch (std::exception const &e) {
-                        std::cerr << "[dispatcher] '" << cmd_msg.command << "' threw: " << e.what()
-                                  << "\n";
-                    }
-                },
-                boost::asio::detached);
+                executor_, invoke_command(it->second, std::move(cmd_msg)), boost::asio::detached);
             return;
         }
     }
