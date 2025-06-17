@@ -42,7 +42,7 @@
         "CMAKE_CXX_FLAGS_DEBUG": "/Od /Zi /Gy",
         "CMAKE_EXE_LINKER_FLAGS_DEBUG": "",
         
-        "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /Ob2 /Oi /Gy /Gw /GF /arch:AVX512 /Zi",
+        "CMAKE_CXX_FLAGS_RELEASE": "/O2 /GL /Ob2 /Oi /Gy /Gw /GF /arch:AVX512",
         "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO"
       }
     },
