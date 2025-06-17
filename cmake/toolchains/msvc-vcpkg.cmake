@@ -9,5 +9,4 @@ endif()
 # MSVC-only compiler flags
 if(MSVC)
   add_compile_options(/Zc:preprocessor)
-  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT TwitchBotApp)
 endif()

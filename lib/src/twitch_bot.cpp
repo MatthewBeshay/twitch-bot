@@ -173,7 +173,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             co_await irc_client_.send_line(reply);
         });
 
-    // -- !setnickname
+    // ---------- !setnickname --------------------------------------------------
     dispatcher_.register_command(
         "setnickname", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
             auto channel = msg.params[0];
@@ -196,7 +196,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             co_await irc_client_.send_line(ok.str());
         });
 
-    // -- !setfaceit
+    // ---------- !setfaceit ----------------------------------------------------
     dispatcher_.register_command(
         "setfaceit", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
             auto channel = msg.params[0];
@@ -219,6 +219,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             co_await irc_client_.send_line(ok.str());
         });
 
+    // ---------- !rank / !elo --------------------------------------------------
     auto rank_handler = [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
         auto channel = msg.params[0];
 
@@ -277,21 +278,21 @@ TwitchBot::TwitchBot(std::string oauth_token,
                                                        {2, 501, 750},
                                                        {1, 100, 500}}};
         int level = 1;
-        for (auto const &L : levels) {
+        for (const auto &L : levels) {
             if (elo >= L.min && elo <= L.max) {
                 level = L.lvl;
                 break;
             }
         }
 
-    // 5) Send reply
+        // 5) Send reply
         {
             // pull alias (string_view) or fall back to the channel name
             std::string_view who_sv = channel_store_.get_alias(channel).value_or(channel);
 
             std::ostringstream oss;
-            oss << "PRIVMSG #" << channel << " :" << who_sv << " is level " << level << " ("
-                << elo << ")" << CRLF;
+            oss << "PRIVMSG #" << channel << " :" << who_sv << " is level " << level << " (" << elo
+                << ")" << CRLF;
             co_await irc_client_.send_line(oss.str());
         }
     };
@@ -299,7 +300,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
     dispatcher_.register_command("rank", rank_handler);
     dispatcher_.register_command("elo", rank_handler);
 
-    // -- !record
+    // ---------- !record -------------------------------------------------------
     dispatcher_.register_command(
         "record", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
             using namespace std;
@@ -395,7 +396,7 @@ boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
 
     try {
         co_await irc_client_.connect(channels);
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "[TwitchBot] connect error: " << e.what() << '\n';
         co_return;
     }

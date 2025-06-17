@@ -106,6 +106,12 @@ public:
     /// @returns Parsed JSON object of match statistics.
     [[nodiscard]] boost::asio::awaitable<json> get_match_stats(std::string_view matchId);
 
+    /// Fetch details about a match (v4).
+    /// @see https://docs.faceit.com/docs/data-api/data/#tag/Matches/operation/getMatch
+    /// @param matchId   FACEIT match UUID.
+    /// @returns Parsed JSON object of match details.
+    [[nodiscard]] boost::asio::awaitable<json> get_match_details(std::string_view matchId);
+
 private:
     /// Internal: send GET to v4 (Data API) with Bearer+Accept headers.
     boost::asio::awaitable<json> send_v4_request(std::string_view host, std::string target);

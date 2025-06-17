@@ -128,6 +128,15 @@ boost::asio::awaitable<json> Client::get_match_stats(std::string_view matchId)
     co_return co_await send_v4_request(V4_HOST, std::move(target));
 }
 
+boost::asio::awaitable<json> Client::get_match_details(std::string_view matchId)
+{
+    std::string target;
+    target.reserve(32 + matchId.size());
+    target.assign("/data/v4/matches/").append(matchId);
+
+    co_return co_await send_v4_request(V4_HOST, std::move(target));
+}
+
 boost::asio::awaitable<json> Client::send_v4_request(std::string_view host, std::string target)
 {
     std::string auth = "Bearer " + api_key_;
@@ -170,7 +179,7 @@ std::string Client::build_target(std::string_view base,
     out.assign(base).push_back('?');
 
     for (size_t i = 0; i < qs.size(); ++i) {
-        auto const& [k, v] = qs[i];
+        const auto& [k, v] = qs[i];
         out += url_encode(k);
         out.push_back('=');
         out += url_encode(v);
