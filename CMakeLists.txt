@@ -36,3 +36,11 @@ add_custom_target(format
 # subdirectories
 add_subdirectory(lib)
 add_subdirectory(app)
+
+if(MSVC)
+  add_compile_options(/Zc:preprocessor)
+  set_property(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    PROPERTY   VS_STARTUP_PROJECT TwitchBotApp
+  )
+endif()
