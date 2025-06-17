@@ -7,15 +7,28 @@
 // Project
 #include "channel_store.hpp"
 
+namespace {
+
+// Write-back debounce interval.
+inline constexpr std::chrono::seconds kSaveDelay{5};
+
+} // unnamed namespace
+
 namespace twitch_bot {
 
-// Ensure all pending handlers finish
+// Wait until every handler queued on strand_ completes.
 ChannelStore::~ChannelStore()
 {
-    std::promise<void> p;
-    auto f = p.get_future();
-    boost::asio::post(strand_, [pr = std::move(p)]() mutable { pr.set_value(); });
-    f.wait();
+    try {
+        std::promise<void> done;
+        auto fut = done.get_future();
+        boost::asio::post(strand_, [p = std::move(done)]() mutable { p.set_value(); });
+        fut.wait();
+    } catch (const std::exception& ex) {
+        std::cerr << "[ChannelStore::~ChannelStore] exception: " << ex.what() << '\n';
+    } catch (...) {
+        std::cerr << "[ChannelStore::~ChannelStore] unknown exception\n";
+    }
 }
 
 void ChannelStore::load()
@@ -34,19 +47,16 @@ void ChannelStore::load()
         return;
     }
 
-    std::lock_guard<std::shared_mutex> guard{data_mutex_};
+    std::lock_guard guard{data_mutex_};
     channel_data_.clear();
     channel_data_.reserve(tbl.size());
 
-    for (auto& [key, node] : tbl) {
-        if (auto table = node.as_table()) {
+    for (const auto& [key, node] : tbl) {
+        if (auto* tbl_ptr = node.as_table()) {
             ChannelInfo info;
-            if (auto n = table->get("alias"); n && n->is_string()) {
-                info.alias = n->value<std::string>();
-            }
-            if (auto n2 = table->get("faceit_nick"); n2 && n2->is_string()) {
-                info.faceit_nick = n2->value<std::string>();
-            }
+            if (auto* alias_node = tbl_ptr->get("alias"); alias_node && alias_node->is_string())
+                info.alias = alias_node->value<std::string>();
+
             channel_data_.emplace(std::piecewise_construct,
                                   std::forward_as_tuple(key),
                                   std::forward_as_tuple(std::move(info)));
@@ -60,12 +70,11 @@ void ChannelStore::save() const noexcept
 
     bool expected = false;
     if (timer_scheduled_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-        save_timer_.expires_after(std::chrono::seconds{5});
-        save_timer_.async_wait([this](auto const& ec) {
+        save_timer_.expires_after(kSaveDelay);
+        save_timer_.async_wait([this](const auto& err) {
             timer_scheduled_.store(false, std::memory_order_relaxed);
-            if (!ec && dirty_.exchange(false, std::memory_order_relaxed)) {
+            if (!err && dirty_.exchange(false, std::memory_order_relaxed))
                 perform_save();
-            }
         });
     }
 }
@@ -74,7 +83,7 @@ void ChannelStore::perform_save() const noexcept
 {
     toml::table tbl = build_table();
 
-    // Write to temp file and rename
+    // Write to temporary file then atomically rename.
     const auto tmp = filename_.string() + ".tmp";
     {
         std::ofstream out{tmp, std::ios::trunc};
@@ -104,9 +113,9 @@ void ChannelStore::perform_save() const noexcept
 toml::table ChannelStore::build_table() const
 {
     toml::table tbl;
-    std::shared_lock<std::shared_mutex> guard{data_mutex_};
+    std::shared_lock guard{data_mutex_};
 
-    for (auto& [key, info] : channel_data_) {
+    for (const auto& [key, info] : channel_data_) {
         toml::table entry;
         if (info.alias) {
             entry.insert("alias", *info.alias);

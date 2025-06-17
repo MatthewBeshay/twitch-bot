@@ -1,48 +1,94 @@
 # .clang-tidy
-
+---
 Checks: >
-  clang-diagnostic-*,
-  bugprone-*,
-  performance-*,
-  modernize-*,
-  readability-*,
-  readability-identifier-naming,
-  -llvm-header-guard,
-  -modernize-use-trailing-return-type,
-  -misc-unused-parameters,
-  -misc-non-private-member-variables-in-classes,
-  -misc-no-recursion,
-  -misc-use-anonymous-namespace,
-  -misc-include-cleaner
-
-WarningsAsErrors: 'modernize-use-nullptr'
+  clang-diagnostic-*,clang-analyzer-*,bugprone-*,
+  cppcoreguidelines-*,-cppcoreguidelines-pro-bounds-*,
+  -performance-*,-modernize-*,-readability-*,
+  -misc-*,-abseil-*,-android-*,
+  -fuchsia-*,-google-*,-llvm-*
+WarningsAsErrors: >
+  cppcoreguidelines-pro-type-cstyle-cast,
+  modernize-use-nullptr
 
 HeaderFilterRegex: '^(app|lib/src|lib/include/(twitch_bot|utils))/'
-
-FormatStyle: file
+FormatStyle:  file
 
 CheckOptions:
-  - key: readability-identifier-naming.VariableCase
-    value: lower_case
-  - key: readability-identifier-naming.ParameterCase
-    value: lower_case
-  - key: readability-identifier-naming.MemberCase
-    value: lower_case
-  - key: readability-identifier-naming.MemberPrefix
-    value: m_
   - key: readability-identifier-naming.ClassCase
     value: CamelCase
   - key: readability-identifier-naming.EnumCase
     value: CamelCase
-  - key: readability-identifier-naming.UnionCase
-    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantCase
+    value: lower_case
   - key: readability-identifier-naming.FunctionCase
     value: lower_case
-  - key: readability-identifier-naming.MacroCase
+  - key: readability-identifier-naming.MethodCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.MacroDefinitionCase
     value: UPPER_CASE
-  - key: readability-identifier-naming.IgnoreMainLikeFunctions
-    value: '1'
-  - key: readability-redundant-member-init.IgnoreBaseInCopyConstructors
-    value: '1'
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: m_
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: m_
+  - key: readability-identifier-naming.PublicMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.TemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeAliasCase
+    value: lower_case
+  - key: readability-identifier-naming.TypedefCase
+    value: lower_case
+  - key: readability-identifier-length.IgnoredVariableNames
+    value: 'i|j|k|x|y|z'
+  - key: readability-identifier-length.IgnoredParameterNames
+    value: 'i|j|k|x|y|z'
+  - key: cppcoreguidelines-init-variables.MathHeader
+    value: '<cmath>'
+  - key: cppcoreguidelines-narrowing-conversions.PedanticMode
+    value: 'true'
+  - key: cppcoreguidelines-prefer-member-initializer.CheckImplicitInitializer
+    value: 'true'
+  - key: bugprone-argument-comment.CommentBoolLiterals
+    value: 'true'
+  - key: bugprone-misplaced-widening-cast.CheckImplicitCasts
+    value: 'true'
+  - key: bugprone-sizeof-expression.WarnOnSizeOfIntegerExpression
+    value: 'true'
+  - key: bugprone-suspicious-string-compare.WarnOnLogicalNotComparison
+    value: 'true'
+  - key: readability-simplify-boolean-expr.ChainedConditionalReturn
+    value: 'true'
+  - key: readability-simplify-boolean-expr.ChainedConditionalAssignment
+    value: 'true'
+  - key: readability-uniqueptr-delete-release.PreferResetCall
+    value: 'true'
+  - key: readability-else-after-return.WarnOnUnfixable
+    value: 'true'
+  - key: readability-else-after-return.WarnOnConditionVariables
+    value: 'true'
+  - key: readability-inconsistent-declaration-parameter-name.Strict
+    value: 'true'
+  - key: readability-qualified-auto.AddConstToQualified
+    value: 'true'
+  - key: readability-redundant-access-specifiers.CheckFirstDeclaration
+    value: 'true'
   - key: modernize-use-default-member-init.UseAssignment
     value: '1'
+  - key: cppcoreguidelines-pro-type-cstyle-cast.AllowList
+    value: 'reinterpret_cast,const_cast'

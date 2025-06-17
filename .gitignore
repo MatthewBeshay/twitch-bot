@@ -37,6 +37,8 @@ Makefile
 # Out-of-source build folders
 /build/
 /*/build/
+/out/
+/*/out/
 
 # Per-user CMake presets
 CMakeUserPresets.json

@@ -21,15 +21,17 @@
 #include "faceit_client.hpp"
 #include "helix_client.hpp"
 #include "irc_client.hpp"
+#include "utils/attributes.hpp"
 
 namespace twitch_bot {
 
-/// High-level bot tying together IRC, commands, Helix and channel storage.
-/// Runs all I/O on a single strand with a pool of threads.
+/// Coordinates IRC, commands, Helix queries and channel storage.
+/// All asynchronous work is serialised through \p strand_, executed by \p pool_.
 class TwitchBot
 {
 public:
-    /// @pre oauth_token, client_id, client_secret and control_channel are non-empty.
+    /// Create a bot; \p threads controls the size of the worker pool.
+    /// Pre: \p oauth_token, \p client_id, \p client_secret and \p control_channel are non-empty.
     explicit TwitchBot(std::string oauth_token,
                        std::string client_id,
                        std::string client_secret,
@@ -39,13 +41,13 @@ public:
 
     ~TwitchBot() noexcept;
 
-    TwitchBot(const TwitchBot &) = delete;
-    TwitchBot &operator=(const TwitchBot &) = delete;
+    TwitchBot(const TwitchBot&) = delete;
+    TwitchBot& operator=(const TwitchBot&) = delete;
 
-    /// Start the bot and block until stopped.
+    /// Run until the IO context stops.
     void run();
 
-    /// Add a callback for every non-command chat message.
+    /// Register a listener for non-command chat messages.
     void add_chat_listener(chat_listener_t listener);
 
 private:
@@ -60,7 +62,7 @@ private:
 
     boost::asio::awaitable<void> run_bot() noexcept;
 
-    static constexpr std::string_view CRLF{"\r\n"};
+    static constexpr std::string_view CRLF{"\r\n"}; ///< IRC line terminator
 
     boost::asio::thread_pool pool_;
     boost::asio::strand<boost::asio::any_io_executor> strand_;

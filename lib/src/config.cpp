@@ -11,52 +11,41 @@
 
 namespace env {
 
-Config Config::parse_config(const std::filesystem::path &path)
+// Read, validate and convert the TOML file at path.
+auto Config::parse_config(const std::filesystem::path& path) -> Config
 {
     const auto path_str = path.string();
     toml::table tbl;
 
     try {
         tbl = toml::parse_file(path_str);
-    } catch (const toml::parse_error &e) {
-        throw EnvError("TOML parse error in '" + path_str + "': " + e.what());
-    } catch (const std::filesystem::filesystem_error &e) {
-        throw EnvError("Cannot read config file '" + path_str + "': " + e.what());
+    } catch (const toml::parse_error& e) {
+        std::string err = "TOML parse error in '" + path_str + "': " + e.what();
+        throw EnvError(err);
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::string err = "Cannot read config file '" + path_str + "': " + e.what();
+        throw EnvError(err);
     }
 
-    // Fetch a non-empty string at the given key path
+    // Return a non-empty string at dotted key path.
     auto fetch_string = [&](std::initializer_list<std::string_view> keys) -> std::string {
-        const toml::node *node = &tbl;
+        const toml::node* node = &tbl;
 
-        for (auto key : keys) {
-            const auto *table_ptr = node->as_table();
-            if (!table_ptr) {
-                throw EnvError("Expected table at '" + std::string{key} + "' in " + path_str);
-            }
+        for (auto key_part : keys) {
+            const auto* table_ptr = node->as_table();
+            if (!table_ptr)
+                throw EnvError("Expected table at '" + std::string{key_part} + "' in " + path_str);
 
-            const auto *found = table_ptr->get(key);
-            if (!found) {
-                std::string dotted;
-                for (auto k : keys) {
-                    if (!dotted.empty()) {
-                        dotted += '.';
-                    }
-                    dotted += k;
-                }
-                throw EnvError("Missing key '" + dotted + "' in " + path_str);
-            }
-
-            node = found;
+            if (const auto* found = table_ptr->get(key_part))
+                node = found;
+            else
+                throw EnvError("Missing key '" + std::string{key_part} + "' in " + path_str);
         }
 
-        if (auto opt = node->value<std::string>()) {
-            if (opt->empty()) {
-                throw EnvError("Empty value in " + path_str);
-            }
+        if (auto opt = node->value<std::string>(); opt && !opt->empty())
             return *opt;
-        }
 
-        throw EnvError("Non-string value in " + path_str);
+        throw EnvError("Invalid value in " + path_str);
     };
 
     ChatConfig chat_cfg{.oauth_token = fetch_string({"twitch", "chat", "oauth_token"}),
@@ -73,21 +62,19 @@ Config Config::parse_config(const std::filesystem::path &path)
                   std::move(faceit_cfg));
 }
 
-Config Config::load_file(const std::filesystem::path &path)
+auto Config::load_file(const std::filesystem::path& path) -> Config
 {
-    if (path.string().empty()) {
+    if (path.string().empty())
         throw EnvError("Config file path must not be empty");
-    }
+
     return parse_config(path);
 }
 
-Config Config::load()
+auto Config::load() -> Config
 {
     const auto default_path = std::filesystem::current_path() / "config.toml";
-
-    if (!std::filesystem::exists(default_path)) {
+    if (!std::filesystem::exists(default_path))
         throw EnvError("Config file not found at '" + default_path.string() + "'");
-    }
 
     return parse_config(default_path);
 }

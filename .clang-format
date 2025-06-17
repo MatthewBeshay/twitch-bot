@@ -10,7 +10,7 @@ UseTab: Never
 # Maximum line length.
 ColumnLimit: 100
 
-# K&R‐derived brace style.
+# K&R-derived brace style.
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterFunction: true
@@ -25,13 +25,16 @@ ConstructorInitializerAllOnOneLineOrOnePerLine: true
 BreakConstructorInitializers: BeforeComma
 ConstructorInitializerIndentWidth: 4
 
-# Disallow short one‐line statements.
+# Disallow short one-line statements.
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: false
 
 # Derive pointer and reference alignment from base style.
 DerivePointerAlignment: true
+
+# West-const (place qualifiers on the left of the type).
+QualifierAlignment: Left
 
 # Spacing rules.
 SpaceBeforeParens: ControlStatements

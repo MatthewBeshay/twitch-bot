@@ -28,6 +28,11 @@ namespace http_client {
 using json = glz::json_t;
 using result = glz::expected<json, glz::error_ctx>;
 
+/// Initial pool sizes.
+inline constexpr std::size_t kDefaultExpectedHosts = 16;
+inline constexpr std::size_t kDefaultConnectionsPerHost = 4;
+
+/// Glaze options shared by every request.
 inline constexpr glz::opts json_opts{.null_terminated = true,
                                      .error_on_unknown_keys = false,
                                      .minified = true};
@@ -35,17 +40,17 @@ inline constexpr glz::opts json_opts{.null_terminated = true,
 using http_header = std::pair<std::string_view, std::string_view>;
 using http_headers = std::span<const http_header>;
 
-/// HTTP/1.1-over-TLS client with keep-alive and minimal allocations
+/// HTTP/1.1-over-TLS client with keep-alive and minimal allocations.
 class client
 {
 public:
     using allocator_type = std::pmr::polymorphic_allocator<std::byte>;
 
-    /// Initialise client with executor and SSL context; reserve pool capacity
+    /// Construct with \p executor and \p ssl_context; pre-allocate pools.
     client(boost::asio::any_io_executor executor,
-           boost::asio::ssl::context &ssl_context,
-           std::size_t expected_hosts = 16,
-           std::size_t expected_conns_per_host = 4) noexcept;
+           boost::asio::ssl::context& ssl_context,
+           std::size_t expected_hosts = kDefaultExpectedHosts,
+           std::size_t expected_conns_per_host = kDefaultConnectionsPerHost) noexcept;
 
     allocator_type get_allocator() const noexcept;
 
@@ -74,18 +79,20 @@ private:
                                            http_headers headers) noexcept;
 
     boost::asio::any_io_executor executor_;
-    boost::asio::ssl::context &ssl_context_;
+    boost::asio::ssl::context* ssl_context_; ///< stored as pointer, avoids ref member
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::strand<boost::asio::any_io_executor> strand_;
+
     std::unordered_map<std::string,
                        std::pmr::vector<std::shared_ptr<connection>>,
                        TransparentStringHash,
                        TransparentStringEq>
         pool_;
-    /// Internal memory resource used for handler allocators.
-    /// Mutable so get_allocator() can be const – safe, no observable state change.
+
+    /// Memory resource for small handler allocations.
     mutable std::pmr::monotonic_buffer_resource handler_buffer_;
-    const std::size_t expected_conns_per_host_;
+
+    std::size_t expected_conns_per_host_; ///< mutable count for move support
 };
 
 } // namespace http_client

@@ -1,35 +1,103 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 4, "minor": 0 },
+  "cmakeMinimumRequired": { "major": 4, "minor": 0, "patch": 0 },
 
   "configurePresets": [
     {
-      "name":         "vs2022-x64",
-      "displayName":  "Visual Studio 17 2022 x64",
-      "generator":    "Visual Studio 17 2022",
-      "architecture": "x64",
-      "toolchainFile":"${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
-      "binaryDir":    "${sourceDir}/build",
+      "name": "common",
+      "hidden": true,
+      "description": "Shared settings for every toolchain",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+
+    {
+      "name": "windows-msbuild-base",
+      "hidden": true,
+      "inherits": "common",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset":     { "value": "host=x64", "strategy": "external" }
+    },
+
+    {
+      "name": "vs2022-msvc",
+      "displayName": "Visual Studio 2022 - MSVC",
+      "inherits": "windows-msbuild-base",
+      "generator": "Visual Studio 17 2022",
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "intelliSenseMode": "windows-msvc-x64"
+        }
+      }
+    },
+
+    {
+      "name": "vs2022-clangcl",
+      "displayName": "Visual Studio 2022 - ClangCL",
+      "inherits": "windows-msbuild-base",
+      "generator": "Visual Studio 17 2022",
+      "toolset": { "value": "ClangCL", "strategy": "set" },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "intelliSenseMode": "windows-clang-x64"
+        }
+      }
+    },
+
+    {
+      "name": "ninja-clang",
+      "displayName": "Ninja - ClangCL",
+      "inherits": "common",
+      "generator": "Ninja",
+      "environment": {
+        "CLANG_ROOT": "C:/Program Files/LLVM"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "$env{CLANG_ROOT}/bin/clang-cl.exe",
+        "CMAKE_CXX_COMPILER": "$env{CLANG_ROOT}/bin/clang-cl.exe",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+
+    {
+      "name": "ninja-clang-tidy",
+      "displayName": "Ninja - clang tidy",
+      "inherits": "ninja-clang",
+      "cacheVariables": {
+        "ENABLE_CLANG_TIDY": "ON"
       }
     }
   ],
 
   "buildPresets": [
+    { "name": "msvc-debug",        "configurePreset": "vs2022-msvc",      "configuration": "Debug"   },
+    { "name": "msvc-release",      "configurePreset": "vs2022-msvc",      "configuration": "Release" },
+    { "name": "clangcl-vs-debug",  "configurePreset": "vs2022-clangcl",   "configuration": "Debug"   },
+    { "name": "clangcl-vs-release","configurePreset": "vs2022-clangcl",   "configuration": "Release" },
+    { "name": "clangcl-ninja",     "configurePreset": "ninja-clang",      "targets": [ "all" ]       },
+    { "name": "ninja-clang-tidy",  "configurePreset": "ninja-clang-tidy", "targets": [ "all" ]       }
+  ],
+
+  "testPresets": [
     {
-      "name":            "vs2022-x64-debug",
-      "configurePreset": "vs2022-x64",
-      "configuration":   "Debug"
+      "name": "tests-common",
+      "hidden": true,
+      "output":    { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": true }
     },
     {
-      "name":            "vs2022-x64-release",
-      "configurePreset": "vs2022-x64",
-      "configuration":   "Release"
-    },
-    {
-      "name":            "format",
-      "configurePreset": "vs2022-x64"
+      "name": "tests-msvc-debug",
+      "inherits": "tests-common",
+      "configurePreset": "vs2022-msvc"
     }
   ]
 }

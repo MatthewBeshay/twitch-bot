@@ -8,14 +8,13 @@
 #include <openssl/ssl.h>
 
 // Project
-#include "utils/attributes.hpp"
-
 #include "helix_client.hpp"
+#include "utils/attributes.hpp"
 
 namespace twitch_bot {
 namespace detail {
 
-    /// Build body for token request.
+    /// Form-urlencoded body for the OAuth2 token request.
     inline std::string make_token_body(std::string_view client_id,
                                        std::string_view client_secret) noexcept
     {
@@ -29,17 +28,16 @@ namespace detail {
         return body;
     }
 
-    /// Parse `n` decimal digits from `p`.
-    inline int parse_digits(const char *TB_RESTRICT p, int n) noexcept
+    /// Parse \p n decimal digits starting at \p p.
+    inline int parse_digits(const char* TB_RESTRICT p, int n) noexcept
     {
-        int value = 0;
-        for (int i = 0; i < n; ++i) {
-            value = value * 10 + (p[i] - '0');
-        }
-        return value;
+        int v = 0;
+        for (int i = 0; i < n; ++i)
+            v = v * 10 + (p[i] - '0');
+        return v;
     }
 
-    /// Days since civil epoch (1970-01-01).
+    /// Days since 1970-01-01 (civil calendar).
     inline constexpr int64_t days_from_civil(int64_t y, unsigned m, unsigned d) noexcept
     {
         y -= m <= 2;
@@ -53,14 +51,14 @@ namespace detail {
 } // namespace detail
 
 HelixClient::HelixClient(boost::asio::any_io_executor executor,
-                         boost::asio::ssl::context &ssl_ctx,
+                         boost::asio::ssl::context& ssl_ctx,
                          std::string_view client_id,
                          std::string_view client_secret) noexcept
-    : executor_(executor)
-    , http_client_(executor_, ssl_ctx)
-    , client_id_(client_id)
-    , client_secret_(client_secret)
-    , token_expiry_(std::chrono::steady_clock::now())
+    : executor_{executor}
+    , http_client_{executor_, ssl_ctx}
+    , client_id_{client_id}
+    , client_secret_{client_secret}
+    , token_expiry_{std::chrono::steady_clock::now()}
 {
     token_body_ = detail::make_token_body(client_id_, client_secret_);
     target_path_.reserve(64);
@@ -71,49 +69,44 @@ boost::asio::awaitable<void> HelixClient::ensure_token() noexcept
 {
     {
         std::shared_lock lock{token_mutex_};
-        if (!token_.empty() && std::chrono::steady_clock::now() < token_expiry_) {
+        if (!token_.empty() && std::chrono::steady_clock::now() < token_expiry_)
             co_return;
-        }
     }
 
-    static constexpr std::string_view k_token_host = "id.twitch.tv";
-    static constexpr std::string_view k_token_port = "443";
-    static constexpr std::string_view k_token_target = "/oauth2/token";
+    static constexpr std::string_view host = "id.twitch.tv";
+    static constexpr std::string_view port = "443";
+    static constexpr std::string_view target = "/oauth2/token";
 
-    static const http_client::http_header header{"Content-Type",
-                                                 "application/x-www-form-urlencoded"};
-    http_client::http_headers headers{&header, 1};
+    static const http_client::http_header hdr{"Content-Type", "application/x-www-form-urlencoded"};
+    http_client::http_headers headers{&hdr, 1};
 
-    http_client::result result;
+    http_client::result res;
     try {
-        result = co_await http_client_.post(k_token_host, k_token_port, k_token_target, token_body_,
-                                            headers);
+        res = co_await http_client_.post(host, port, target, token_body_, headers);
     } catch (...) {
         std::unique_lock lock{token_mutex_};
         token_.clear();
         co_return;
     }
 
-    if (!result) {
+    if (!res) {
         std::unique_lock lock{token_mutex_};
         token_.clear();
         co_return;
     }
 
-    auto json_val = std::move(*result);
+    auto j = std::move(*res);
     try {
-        auto access_token = json_val["access_token"].get<std::string>();
-        int expires_in = detail::parse_digits(json_val["expires_in"].get<std::string>().data(), 10);
+        auto tok = j["access_token"].get<std::string>();
+        int secs = detail::parse_digits(j["expires_in"].get<std::string>().data(), 10);
 
         std::unique_lock lock{token_mutex_};
-        token_ = std::move(access_token);
-        token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds{expires_in};
+        token_ = std::move(tok);
+        token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds{secs};
     } catch (...) {
         std::unique_lock lock{token_mutex_};
         token_.clear();
     }
-
-    co_return;
 }
 
 boost::asio::awaitable<std::optional<stream_start_result>>
@@ -123,49 +116,44 @@ HelixClient::get_stream_start(std::string_view channel_id) noexcept
 
     {
         std::shared_lock lock{token_mutex_};
-        if (token_.empty()) {
+        if (token_.empty())
             co_return std::nullopt;
-        }
-        auth_header_.assign("Bearer ");
-        auth_header_.append(token_);
+        auth_header_ = "Bearer ";
+        auth_header_ += token_;
     }
 
-    static constexpr std::string_view k_helix_host = "api.twitch.tv";
-    static constexpr std::string_view k_helix_port = "443";
-    static constexpr std::string_view k_helix_prefix = "/helix/streams?user_login=";
+    static constexpr std::string_view host = "api.twitch.tv";
+    static constexpr std::string_view port = "443";
+    static constexpr std::string_view prefix = "/helix/streams?user_login=";
 
-    target_path_.clear();
-    target_path_ += k_helix_prefix;
+    target_path_.assign(prefix);
     target_path_ += channel_id;
 
     std::array<http_client::http_header, 2> hdrs{
         {{"Client-ID", client_id_}, {"Authorization", auth_header_}}};
     http_client::http_headers headers{hdrs.data(), hdrs.size()};
 
-    http_client::result result;
+    http_client::result res;
     try {
-        result = co_await http_client_.get(k_helix_host, k_helix_port, target_path_, headers);
+        res = co_await http_client_.get(host, port, target_path_, headers);
     } catch (...) {
         co_return std::nullopt;
     }
 
-    if (!result) {
+    if (!res)
         co_return std::nullopt;
-    }
 
-    auto json_val = std::move(*result);
+    auto j = std::move(*res);
     try {
-        auto &data_array = json_val["data"].get<decltype(json_val)::array_t>();
-        if (data_array.empty()) {
+        auto& arr = j["data"].get<decltype(j)::array_t>();
+        if (arr.empty())
             co_return std::nullopt;
-        }
 
-        auto &first = data_array.front();
+        auto& first = arr.front();
         auto ts = first["started_at"].get<std::string>();
         auto ms = parse_iso8601_ms(ts);
-        if (!ms) {
+        if (!ms)
             co_return std::nullopt;
-        }
 
         co_return stream_start_result{true, *ms};
     } catch (...) {
@@ -173,25 +161,23 @@ HelixClient::get_stream_start(std::string_view channel_id) noexcept
     }
 }
 
-std::optional<std::chrono::milliseconds>
-HelixClient::parse_iso8601_ms(std::string_view timestamp) noexcept
+std::optional<std::chrono::milliseconds> HelixClient::parse_iso8601_ms(std::string_view ts) noexcept
 {
-    // Expected format: "YYYY-MM-DDThh:mm:ssZ"
-    if (timestamp.size() != 20 || timestamp[4] != '-' || timestamp[7] != '-' || timestamp[10] != 'T'
-        || timestamp[13] != ':' || timestamp[16] != ':' || timestamp[19] != 'Z') {
+    // Expected: YYYY-MM-DDThh:mm:ssZ
+    if (ts.size() != 20 || ts[4] != '-' || ts[7] != '-' || ts[10] != 'T' || ts[13] != ':'
+        || ts[16] != ':' || ts[19] != 'Z')
         return std::nullopt;
-    }
 
-    int year = detail::parse_digits(timestamp.data() + 0, 4);
-    unsigned month = detail::parse_digits(timestamp.data() + 5, 2);
-    unsigned day = detail::parse_digits(timestamp.data() + 8, 2);
-    unsigned hour = detail::parse_digits(timestamp.data() + 11, 2);
-    unsigned minute = detail::parse_digits(timestamp.data() + 14, 2);
-    unsigned second = detail::parse_digits(timestamp.data() + 17, 2);
+    int y = detail::parse_digits(ts.data() + 0, 4);
+    unsigned m = detail::parse_digits(ts.data() + 5, 2);
+    unsigned d = detail::parse_digits(ts.data() + 8, 2);
+    unsigned hh = detail::parse_digits(ts.data() + 11, 2);
+    unsigned mm = detail::parse_digits(ts.data() + 14, 2);
+    unsigned ss = detail::parse_digits(ts.data() + 17, 2);
 
-    int64_t days = detail::days_from_civil(year, month, day);
-    int64_t secs = days * 86400LL + hour * 3600 + minute * 60 + second;
-    return std::chrono::milliseconds{secs * 1000LL};
+    int64_t days = detail::days_from_civil(y, m, d);
+    int64_t s = days * 86400LL + hh * 3600 + mm * 60 + ss;
+    return std::chrono::milliseconds{s * 1000LL};
 }
 
 } // namespace twitch_bot
