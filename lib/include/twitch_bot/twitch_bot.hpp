@@ -20,6 +20,7 @@
 #include "command_dispatcher.hpp"
 #include "helix_client.hpp"
 #include "irc_client.hpp"
+#include "utils/attributes.hpp"
 
 namespace twitch_bot {
 
@@ -47,13 +48,10 @@ public:
     void add_chat_listener(chat_listener_t listener);
 
 private:
-    static bool isPrivileged(const IrcMessage &msg) noexcept
+    TB_FORCE_INLINE
+    static bool isPrivileged(const IrcMessage &TB_RESTRICT msg) noexcept
     {
-        if (msg.is_broadcaster)
-            return true;
-        if (msg.is_moderator)
-            return true;
-        return msg.prefix == "";
+        return msg.is_broadcaster || msg.is_moderator || msg.prefix.empty();
     }
 
     boost::asio::awaitable<void> run_bot() noexcept;

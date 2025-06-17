@@ -46,8 +46,19 @@ TwitchBot::TwitchBot(std::string oauth_token,
             if (channel != control_channel_)
                 co_return;
 
-            if (!args.empty() && !isPrivileged(msg))
+            // require moderator to target another channel
+            if (!args.empty() && !isPrivileged(msg)) {
+                std::array<boost::asio::const_buffer, 6> warning{
+                    {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
+                     boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
+                     boost::asio::buffer(
+                         " You must be a mod to use this command on another channel. "
+                         "If you want to add the bot from your own channel just use !join",
+                         120),
+                     boost::asio::buffer(CRLF)}};
+                co_await irc_client_.send_buffers(warning);
                 co_return;
+            }
 
             std::string_view target = args.empty() ? user : args;
 
@@ -83,11 +94,24 @@ TwitchBot::TwitchBot(std::string oauth_token,
             auto user = msg.prefix;
             auto args = msg.trailing;
 
+            // only in control channel
             if (channel != control_channel_)
                 co_return;
 
-            if (!args.empty() && !isPrivileged(msg))
+            // require moderator to target another channel
+            if (!args.empty() && !isPrivileged(msg)) {
+                std::array<boost::asio::const_buffer, 6> warning{
+                    {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
+                     boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
+                     boost::asio::buffer(
+                         " You must be a mod to use this command on another channel. "
+                         "If you want to remove the bot "
+                         "from your own channel just use !leave",
+                         126),
+                     boost::asio::buffer(CRLF)}};
+                co_await irc_client_.send_buffers(warning);
                 co_return;
+            }
 
             std::string_view target = args.empty() ? user : args;
 
@@ -115,6 +139,37 @@ TwitchBot::TwitchBot(std::string oauth_token,
                  boost::asio::buffer(CRLF)}};
             co_await irc_client_.send_buffers(ack);
         });
+
+    // !channels
+    dispatcher_.register_command("channels",
+                                 [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
+                                     auto channel = msg.params[0];
+
+                                     // only in control channel
+                                     if (channel != control_channel_)
+                                         co_return;
+
+                                     // gather all channel names
+                                     std::vector<std::string_view> channels;
+                                     channel_store_.channel_names(channels);
+
+                                     // build comma-separated list
+                                     std::string list;
+                                     for (size_t i = 0; i < channels.size(); ++i) {
+                                         list += channels[i];
+                                         if (i + 1 < channels.size())
+                                             list += ", ";
+                                     }
+
+                                     // if none, say so
+                                     if (list.empty())
+                                         list = "(none)";
+
+                                     // send the message
+                                     std::string reply = "PRIVMSG #" + control_channel_
+                                         + " :Currently in channels: " + list + CRLF;
+                                     co_await irc_client_.send_line(reply);
+                                 });
 }
 
 TwitchBot::~TwitchBot() noexcept
