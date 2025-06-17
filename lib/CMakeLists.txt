@@ -1,4 +1,4 @@
-# lib/CMakeLists.txt - TwitchBotCore
+# lib/CMakeLists.txt – TwitchBotCore
 
 add_library(TwitchBotCore
   src/channel_store.cpp
@@ -15,16 +15,8 @@ file(GLOB_RECURSE TB_HEADERS
   "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
 )
 
-if (WIN32)
-  target_compile_definitions(TwitchBotCore
-    PUBLIC
-      _WIN32_WINNT=0x0A00
-  )
-endif()
-
 target_sources(TwitchBotCore
-  PRIVATE
-    ${TB_HEADERS}
+  PRIVATE ${TB_HEADERS}
 )
 
 source_group(
@@ -42,10 +34,24 @@ target_include_directories(TwitchBotCore
 
 target_compile_features(TwitchBotCore PUBLIC cxx_std_23)
 
-if (MSVC)
-  target_compile_options(TwitchBotCore PRIVATE /W4 /bigobj)
-else()
-  target_compile_options(TwitchBotCore PRIVATE -Wall -Wextra -pedantic)
+# compiler-specific warnings and options
+target_compile_options(TwitchBotCore PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:
+    /W4
+    /bigobj
+    /Zc:lambda
+  >
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:
+    -Wall
+    -Wextra
+    -pedantic
+  >
+)
+
+if (WIN32)
+  target_compile_definitions(TwitchBotCore
+    PUBLIC _WIN32_WINNT=0x0A00
+  )
 endif()
 
 find_package(Boost         REQUIRED COMPONENTS asio beast)

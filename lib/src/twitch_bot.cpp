@@ -36,7 +36,6 @@ TwitchBot::TwitchBot(std::string oauth_token,
     channel_store_.load();
 
     // ---------- !join ---------------------------------------------------------
-
     dispatcher_.register_command(
         "join", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
             auto channel = msg.params[0];

@@ -11,12 +11,10 @@ int main() {
         auto cfg = env::Config::load();
 
         // Unpack only the values TwitchBot actually needs
-        twitch_bot::TwitchBot bot{
-            /* oauthToken     = */ cfg.chat().oauth_token,
-            /* clientId       = */ cfg.app().client_id,
-            /* clientSecret   = */ cfg.app().client_secret,
-            /* controlChannel = */ cfg.bot().channel
-        };
+        twitch_bot::TwitchBot bot{/* oauth_token     = */ cfg.chat().oauth_token,
+                                  /* client_id       = */ cfg.app().client_id,
+                                  /* client_secret   = */ cfg.app().client_secret,
+                                  /* control_channel = */ cfg.bot().channel};
 
         bot.run();
     }

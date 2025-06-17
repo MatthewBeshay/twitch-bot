@@ -137,7 +137,7 @@ auto client::perform(boost::beast::http::verb method,
     req.set(boost::beast::http::field::host, host);
     req.set(boost::beast::http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
-    for (auto h : headers)
+    for (auto& h : headers)
         req.set(h.first, h.second);
 
     if (method == boost::beast::http::verb::post) {
