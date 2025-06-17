@@ -20,8 +20,8 @@ TwitchBot::TwitchBot(std::string oauth_token,
                      std::string client_secret,
                      std::string control_channel,
                      std::size_t threads)
-    : pool_{threads > 0 ? threads : 1}
-    , strand_{pool_.get_executor()}
+    : pool_{threads > 0 ? threads : 1} // I/O thread-pool
+    , strand_{pool_.get_executor()} // serialises all work
     , ssl_ctx_{boost::asio::ssl::context::tlsv12_client}
     , oauth_token_{std::move(oauth_token)}
     , client_id_{std::move(client_id)}
@@ -35,51 +35,53 @@ TwitchBot::TwitchBot(std::string oauth_token,
     ssl_ctx_.set_default_verify_paths();
     channel_store_.load();
 
-    // !join
+    // ---------- !join ---------------------------------------------------------
+
     dispatcher_.register_command(
         "join", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
             auto channel = msg.params[0];
             auto user = msg.prefix;
             auto args = msg.trailing;
 
-            // only in control channel
-            if (channel != control_channel_)
+            if (channel != control_channel_) // only from control channel
                 co_return;
 
-            // require moderator to target another channel
+            // mods may target another channel
             if (!args.empty() && !isPrivileged(msg)) {
-                std::array<boost::asio::const_buffer, 6> warning{
+                std::array<boost::asio::const_buffer, 6> warn{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
                      boost::asio::buffer(
-                         " You must be a mod to use this command on another channel. "
-                         "If you want to add the bot from your own channel just use "
-                         "!join",
-                         120),
+                         " You must be a mod to invite the bot to a different channel. "
+                         "Use !join from your own channel instead.",
+                         118),
                      boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(warning);
+                co_await irc_client_.send_buffers(warn);
                 co_return;
             }
 
             std::string_view target = args.empty() ? user : args;
 
+            // ignore duplicates
             if (channel_store_.contains(target)) {
-                std::array<boost::asio::const_buffer, 5> buffers{
+                std::array<boost::asio::const_buffer, 5> msg_exist{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :Already in channel ", 22), boost::asio::buffer(target),
                      boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(buffers);
+                co_await irc_client_.send_buffers(msg_exist);
                 co_return;
             }
 
             channel_store_.add_channel(target);
             channel_store_.save();
 
+            // JOIN #<target>
             std::array<boost::asio::const_buffer, 3> join_cmd{{boost::asio::buffer("JOIN #", 6),
                                                                boost::asio::buffer(target),
                                                                boost::asio::buffer(CRLF)}};
             co_await irc_client_.send_buffers(join_cmd);
 
+            // acknowledgement
             std::array<boost::asio::const_buffer, 7> ack{
                 {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                  boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
@@ -88,46 +90,45 @@ TwitchBot::TwitchBot(std::string oauth_token,
             co_await irc_client_.send_buffers(ack);
         });
 
-    // !leave
+    // ---------- !leave --------------------------------------------------------
     dispatcher_.register_command(
         "leave", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
             auto channel = msg.params[0];
             auto user = msg.prefix;
             auto args = msg.trailing;
 
-            // only in control channel
             if (channel != control_channel_)
                 co_return;
 
-            // require moderator to target another channel
+            // mods may target another channel
             if (!args.empty() && !isPrivileged(msg)) {
-                std::array<boost::asio::const_buffer, 6> warning{
+                std::array<boost::asio::const_buffer, 6> warn{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
                      boost::asio::buffer(
-                         " You must be a mod to use this command on another channel. "
-                         "If you want to remove the bot "
-                         "from your own channel just use !leave",
-                         126),
+                         " You must be a mod to remove the bot from another channel. "
+                         "Use !leave from your own channel instead.",
+                         119),
                      boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(warning);
+                co_await irc_client_.send_buffers(warn);
                 co_return;
             }
 
             std::string_view target = args.empty() ? user : args;
 
             if (!channel_store_.contains(target)) {
-                std::array<boost::asio::const_buffer, 5> buffers{
+                std::array<boost::asio::const_buffer, 5> msg_absent{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :Not in channel ", 19), boost::asio::buffer(target),
                      boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(buffers);
+                co_await irc_client_.send_buffers(msg_absent);
                 co_return;
             }
 
             channel_store_.remove_channel(target);
             channel_store_.save();
 
+            // PART #<target>
             std::array<boost::asio::const_buffer, 3> part_cmd{{boost::asio::buffer("PART #", 6),
                                                                boost::asio::buffer(target),
                                                                boost::asio::buffer(CRLF)}};
@@ -141,28 +142,22 @@ TwitchBot::TwitchBot(std::string oauth_token,
             co_await irc_client_.send_buffers(ack);
         });
 
-    // !channels
+    // ---------- !channels -----------------------------------------------------
     dispatcher_.register_command(
         "channels", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
             auto channel = msg.params[0];
-
-            // only in control channel
             if (channel != control_channel_)
                 co_return;
 
-            // gather all channel names
-            std::vector<std::string_view> channels;
-            channel_store_.channel_names(channels);
+            std::vector<std::string_view> names;
+            channel_store_.channel_names(names);
 
-            // build comma-separated list
             std::string list;
-            for (size_t i = 0; i < channels.size(); ++i) {
-                list += channels[i];
-                if (i + 1 < channels.size())
+            for (std::size_t i = 0; i < names.size(); ++i) {
+                list += names[i];
+                if (i + 1 < names.size())
                     list += ", ";
             }
-
-            // if none, say so
             if (list.empty())
                 list = "(none)";
 
@@ -185,47 +180,44 @@ void TwitchBot::add_chat_listener(chat_listener_t listener)
 void TwitchBot::run()
 {
     boost::asio::co_spawn(strand_, run_bot(), boost::asio::detached);
-
-    pool_.join();
+    pool_.join(); // block until stop
 }
 
 boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
 {
-    // build channel list once
+    // Ensure bot is in its own control channel
     std::vector<std::string_view> channels;
     channel_store_.channel_names(channels);
-    if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end()) {
+    if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end())
         channels.push_back(control_channel_);
-    }
 
     try {
         co_await irc_client_.connect(channels);
-    } catch (const std::exception &e) {
-        std::cerr << "[TwitchBot] connect error: " << e.what() << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "[TwitchBot] connect error: " << e.what() << '\n';
         co_return;
     }
 
-    decltype(auto) exec = co_await boost::asio::this_coro::executor;
+    auto exec = co_await boost::asio::this_coro::executor;
 
-    // ping loop
+    // keep-alive PING
     boost::asio::co_spawn(
         exec,
         [this]() noexcept -> boost::asio::awaitable<void> { co_await irc_client_.ping_loop(); },
         boost::asio::detached);
 
-    // read + dispatch loop
+    // read / dispatch
     boost::asio::co_spawn(
         exec,
         [this]() noexcept -> boost::asio::awaitable<void> {
             co_await irc_client_.read_loop([this](std::string_view raw) {
                 std::cout << "[IRC] " << raw << '\n';
-                auto msg = parse_irc_line(raw);
-                dispatcher_.dispatch(msg);
+                dispatcher_.dispatch(parse_irc_line(raw));
             });
         },
         boost::asio::detached);
 
-    // idle forever
+    // idle indefinitely
     boost::asio::steady_timer idle{pool_};
     idle.expires_at(std::chrono::steady_clock::time_point::max());
     co_await idle.async_wait(boost::asio::use_awaitable);

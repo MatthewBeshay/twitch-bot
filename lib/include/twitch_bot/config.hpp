@@ -7,26 +7,26 @@
 
 namespace env {
 
-/// Thrown when loading or parsing the configuration fails.
+/// Configuration-loading failure.
 class EnvError final : public std::runtime_error
 {
 public:
     explicit EnvError(const std::string& msg) noexcept;
 };
 
-/// Twitch chat credentials (non-empty strings).
+/// Twitch chat credentials.
 struct ChatConfig {
     std::string oauth_token;
     std::string refresh_token;
 };
 
-/// Twitch application credentials (non-empty strings).
+/// Twitch application credentials.
 struct AppConfig {
     std::string client_id;
     std::string client_secret;
 };
 
-/// Twitch bot settings (non-empty string).
+/// Twitch bot settings.
 struct BotConfig {
     std::string channel;
 };
@@ -35,29 +35,27 @@ struct BotConfig {
 class Config
 {
 public:
-    /// Load configuration from a file.
-    /// @pre  path.string() is not empty
-    /// @throws EnvError on failure
-    static Config load_file(const std::filesystem::path &path);
+    /// Load from the file at \p path.
+    /// Pre: !path.empty()
+    static Config load_file(const std::filesystem::path& path);
 
-    /// Load configuration from "./config.toml" in working directory.
-    /// @throws EnvError on failure
+    /// Load from "./config.toml".
     static Config load();
 
-    /// Return Twitch chat credentials.
-    const ChatConfig &chat() const noexcept
+    /// Twitch chat credentials.
+    [[nodiscard]] const ChatConfig& chat() const noexcept
     {
         return chat_;
     }
 
-    /// Return Twitch application credentials.
-    const AppConfig &app() const noexcept
+    /// Twitch application credentials.
+    [[nodiscard]] const AppConfig& app() const noexcept
     {
         return app_;
     }
 
-    /// Return Twitch bot settings.
-    const BotConfig &bot() const noexcept
+    /// Twitch bot settings.
+    [[nodiscard]] const BotConfig& bot() const noexcept
     {
         return bot_;
     }
@@ -72,7 +70,7 @@ private:
     AppConfig app_;
     BotConfig bot_;
 
-    static Config parse_config(const std::filesystem::path &path);
+    static Config parse_config(const std::filesystem::path& path);
 };
 
 } // namespace env

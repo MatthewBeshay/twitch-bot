@@ -1,19 +1,12 @@
 #pragma once
 
-// Attribute macros for cross-platform "always inline" and aliasing hints.
-// Uses compiler-specific keywords to help the optimizer.
-
-// TB_FORCE_INLINE:
-//   Requests aggressive inlining.
-//   - MSVC:   __forceinline
-//   - GCC/Clang: inline __attribute__((always_inline))
-//   - Others: inline
+// Cross-platform attributes:
+//   TB_FORCE_INLINE – request aggressive inlining
+//   TB_RESTRICT     – indicate a pointer does not alias others
 //
-// TB_RESTRICT:
-//   Declares that a pointer does not alias other pointers.
-//   - MSVC:   __restrict
-//   - GCC/Clang: __restrict__
-//   - Others: (empty)
+// MSVC:   __forceinline / __restrict
+// GCC/Clang: inline __attribute__((always_inline)) / __restrict__
+// Fallback: inline / (nothing)
 #if defined(_MSC_VER)
 #define TB_FORCE_INLINE __forceinline
 #define TB_RESTRICT __restrict

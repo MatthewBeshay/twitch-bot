@@ -28,38 +28,34 @@ void CommandDispatcher::register_chat_listener(chat_listener_t listener) noexcep
     chat_listeners_.push_back(std::move(listener));
 }
 
+// Run the handler and surface errors on stderr.
 template <typename Handler>
 boost::asio::awaitable<void> invoke_command(Handler handler, IrcMessage msg)
 {
     try {
-        // co_await the real handler, moving msg into the coroutine frame
         co_await handler(std::move(msg));
-    } catch (std::exception const &e) {
-        std::cerr << "[dispatcher] '" << msg.command << "' threw: " << e.what() << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "[dispatcher] '" << msg.command << "' threw: " << e.what() << '\n';
     }
 }
 
 void CommandDispatcher::dispatch(IrcMessage msg) noexcept
 {
-    // ignore non-PRIVMSG or missing parameters
-    if (msg.command != "PRIVMSG" || msg.param_count < 1) {
+    // Not an IRC chat line.
+    if (msg.command != "PRIVMSG" || msg.param_count < 1)
         return;
-    }
 
-    // extract channel and user
     std::string_view channel = normalize_channel(msg.params[0]);
     std::string_view user = extract_user(msg.prefix);
     std::string_view text = msg.trailing;
 
-    // handle commands prefixed with '!'
+    // ‘!cmd …’
     if (!text.empty() && text.front() == '!') {
         std::string_view cmd_name;
         std::string_view args;
         split_command(text, cmd_name, args);
 
-        auto it = commands_.find(cmd_name);
-        if (it != commands_.end()) {
-            // prepare message for handler
+        if (auto it = commands_.find(cmd_name); it != commands_.end()) {
             IrcMessage cmd_msg = msg;
             cmd_msg.command = cmd_name;
             cmd_msg.params[0] = channel;
@@ -72,10 +68,9 @@ void CommandDispatcher::dispatch(IrcMessage msg) noexcept
         }
     }
 
-    // notify chat listeners
-    for (auto const &listener : chat_listeners_) {
+    // Plain chat line.
+    for (auto& listener : chat_listeners_)
         listener(channel, user, text);
-    }
 }
 
 } // namespace twitch_bot

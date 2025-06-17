@@ -26,44 +26,43 @@
 
 namespace twitch_bot {
 
-/// IRC client over secure WebSocket.
+/// Secure WebSocket IRC client.
 class IrcClient
 {
 public:
-    /// Prepare client with executor, TLS context and credentials.
+    /// Create a client bound to \p executor using \p ssl_context and the supplied credentials.
     IrcClient(boost::asio::any_io_executor executor,
-              boost::asio::ssl::context &ssl_context,
+              boost::asio::ssl::context& ssl_context,
               std::string_view oauth_token,
               std::string_view nickname) noexcept;
 
-    IrcClient(const IrcClient &) = delete;
+    IrcClient(const IrcClient&) = delete;
+    IrcClient(IrcClient&&) noexcept = default;
+    IrcClient& operator=(IrcClient&&) = default;
 
-    IrcClient(IrcClient &&) noexcept = default;
-    IrcClient &operator=(IrcClient &&) noexcept = default;
-
-    /// Open connection, authenticate and join channels.
+    /// Connect, authenticate and join the given channels.
     auto connect(std::span<const std::string_view> channels) noexcept
         -> boost::asio::awaitable<void>;
 
-    /// Append CRLF and send an IRC message.
+    /// Send an IRC line, CRLF added automatically.
     auto send_line(std::string_view message) noexcept -> boost::asio::awaitable<void>;
 
-    /// Send raw buffers without heap allocation.
+    /// Send pre-built buffers without allocating.
     auto send_buffers(std::span<const boost::asio::const_buffer> buffers) noexcept
         -> boost::asio::awaitable<void>;
 
-    /// Read frames, split on CRLF, and invoke handler for each line.
+    /// Read frames, split on CRLF, call \p handler for each line.
     template <typename Handler>
     auto read_loop(Handler handler) noexcept -> boost::asio::awaitable<void>;
 
-    /// Periodic PING every four minutes until closed.
+    /// Issue PING every four minutes until the stream closes.
     auto ping_loop() noexcept -> boost::asio::awaitable<void, boost::asio::any_io_executor>;
 
-    /// Stop ping timer and close connection gracefully.
-    auto close() noexcept -> void;
+    /// Cancel timers and close the connection.
+    void close() noexcept;
 
 private:
-    static constexpr std::size_t k_read_buffer_size = 8ULL * 1024ULL;
+    static constexpr std::size_t k_read_buffer_size = 8ULL * 1024ULL; ///< bytes
     static constexpr std::string_view k_crlf = "\r\n";
 
     using tcp_socket_type = boost::asio::ip::tcp::socket;
@@ -84,7 +83,7 @@ auto IrcClient::read_loop(Handler handler) noexcept -> boost::asio::awaitable<vo
         co_await ws_stream_.async_read(read_buffer_, boost::asio::use_awaitable);
 
         auto data = read_buffer_.data();
-        std::string_view chunk{reinterpret_cast<const char *>(data.data()), data.size()};
+        std::string_view chunk{reinterpret_cast<const char*>(data.data()), data.size()};
         read_buffer_.consume(data.size());
 
         std::size_t pos = 0;

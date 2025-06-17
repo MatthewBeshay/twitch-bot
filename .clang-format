@@ -33,6 +33,9 @@ AllowShortFunctionsOnASingleLine: false
 # Derive pointer and reference alignment from base style.
 DerivePointerAlignment: true
 
+# West-const (place qualifiers on the left of the type).
+QualifierAlignment: Left
+
 # Spacing rules.
 SpaceBeforeParens: ControlStatements
 SpacesInParentheses: false
