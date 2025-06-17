@@ -51,13 +51,11 @@ public:
     void add_chat_listener(chat_listener_t listener);
 
 private:
-    static bool isPrivileged(const IrcMessage &msg) noexcept
+    /// Broadcaster, moderator or internal server message.
+    TB_FORCE_INLINE
+    static bool isPrivileged(const IrcMessage& TB_RESTRICT msg) noexcept
     {
-        if (msg.is_broadcaster)
-            return true;
-        if (msg.is_moderator)
-            return true;
-        return msg.prefix == "machow__";
+        return msg.is_broadcaster || msg.is_moderator || msg.prefix.empty();
     }
 
     boost::asio::awaitable<void> run_bot() noexcept;
