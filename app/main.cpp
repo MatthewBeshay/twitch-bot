@@ -12,11 +12,11 @@ int main() {
 
         // Unpack only the values TwitchBot actually needs
         twitch_bot::TwitchBot bot{
-            /* oauthToken     = */ cfg.twitchChatOauthToken_,
-            /* clientId       = */ cfg.twitchAppClientId_,
-            /* clientSecret   = */ cfg.twitchAppClientSecret_,
-            /* controlChannel = */ cfg.twitchBotChannel_,
-            /* faceitApiKey   = */ cfg.faceitApiKey_
+            /* oauthToken     = */ cfg.chat().oauth_token,
+            /* clientId       = */ cfg.app().client_id,
+            /* clientSecret   = */ cfg.app().client_secret,
+            /* controlChannel = */ cfg.bot().channel,
+            /* faceitApiKey   = */ cfg.faceit().api_key
         };
 
         bot.run();

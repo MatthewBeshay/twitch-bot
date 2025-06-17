@@ -3,11 +3,12 @@
 add_library(TwitchBotCore
   src/channel_store.cpp
   src/command_dispatcher.cpp
-  src/faceit_client.cpp
   src/config.cpp
+  src/faceit_client.cpp
   src/helix_client.cpp
   src/http_client.cpp
   src/irc_client.cpp
+  src/record_service.cpp
   src/twitch_bot.cpp
 )
 

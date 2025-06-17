@@ -1,93 +1,128 @@
 ﻿#pragma once
 
+// C++ Standard Library
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
+// 3rd-party
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/ssl/context.hpp>
-#include <boost/json.hpp>
+#include <glaze/json.hpp>
+
+// Project
+#include "http_client.hpp"
 
 namespace faceit {
 
-/// JSON result type (Boost.JSON)
-using json = boost::json::value;
+/// Glaze JSON alias
+using json = glz::json_t;
 
-/// @brief High-performance client for FACEIT v4/v1 Data APIs over HTTPS.
-///        All methods are coroutine-based and return awaitable results.
-/// @throws std::invalid_argument on empty API key.
-class Client {
+/// High-performance client for FACEIT’s Data (v4) and Stats (v1) APIs.
+///
+/// - **v4 Data API** (open.faceit.com/data/v4) requires
+///   `Authorization: Bearer <API_KEY>` and `Accept: application/json`
+/// - **v1 Stats API** (api.faceit.com/stats/v1) must send **no** headers
+///   (to avoid intermittent HTTP 500s).
+class Client
+{
 public:
-    /// @param apiKey  Non-empty FACEIT API key (v4).
-    explicit Client(std::string apiKey);
+    /// Construct with executor, SSL context, and v4 API key.
+    /// @param executor  Asio executor for async operations.
+    /// @param ssl_ctx   SSL context for TLS.
+    /// @param apiKey    FACEIT v4 API key (must be non-empty).
+    /// @throws std::invalid_argument if `apiKey` is empty.
+    explicit Client(boost::asio::any_io_executor executor,
+                    boost::asio::ssl::context& ssl_ctx,
+                    std::string apiKey);
 
-    /// @brief Lookup a player by nickname (v4).
-    /// @param nickname  Player's display name.
-    /// @param game      Game slug (default "cs2").
-    /// @returns Parsed JSON of player details.
-    boost::asio::awaitable<json>
-    getPlayerByNickname(std::string_view nickname,
-                        std::string_view game = "cs2");
+    Client(const Client&) = delete;
+    Client& operator=(const Client&) = delete;
 
-    /// @brief Lookup a player by FACEIT ID (v4).
+    /// Lookup a player by nickname (v4).
+    /// @see https://docs.faceit.com/docs/data-api/data/#tag/Players/operation/getPlayerFromLookup
+    /// @param nickname  FACEIT display name.
+    /// @param game      Game slug (default `"cs2"`).
+    /// @returns Parsed JSON object of player details.
+    [[nodiscard]] boost::asio::awaitable<json>
+    get_player_by_nickname(std::string_view nickname, std::string_view game = "cs2");
+
+    /// Lookup a player by FACEIT ID (v4).
+    /// @see https://docs.faceit.com/docs/data-api/data/#tag/Players/operation/getPlayer
     /// @param playerId  FACEIT player UUID.
-    /// @returns Parsed JSON of player details.
-    boost::asio::awaitable<json>
-    getPlayerById(std::string_view playerId);
+    /// @returns Parsed JSON object of player details.
+    [[nodiscard]] boost::asio::awaitable<json> get_player_by_id(std::string_view playerId);
 
-    /// @brief Fetch per-match stats for a player (v4).
+    /// Fetch per-match stats (v4).
+    ///
+    /// Endpoint: `/data/v4/players/{playerId}/games/{game}/stats`
+    /// Query parameters:
+    /// - `from` (ms since epoch) **inclusive** match finished time
+    /// - `limit` (1–100)
+    /// - `to` (ms since epoch) **optional** exclusive match finished time
+    ///
+    /// @see https://docs.faceit.com/docs/data-api/data/#tag/Players/operation/getPlayerStats
     /// @param playerId  FACEIT player UUID.
-    /// @param fromTs    UNIX timestamp (inclusive).
-    /// @param toTs      Optional UNIX timestamp (exclusive).
-    /// @param limit     Max number of entries (default 100).
-    /// @returns Vector of per-match JSON stats.
-    boost::asio::awaitable<std::vector<json>>
-    getPlayerStats(std::string_view        playerId,
-                   int64_t                fromTs,
-                   std::optional<int64_t> toTs    = std::nullopt,
-                   int                    limit   = 100);
+    /// @param fromTs    Lower bound timestamp (ms since epoch).
+    /// @param toTs      Optional upper bound timestamp (ms since epoch).
+    /// @param limit     Maximum items to return (default 100).
+    /// @returns Vector of JSON objects (one per match).
+    [[nodiscard]] boost::asio::awaitable<std::vector<json>>
+    get_player_stats(std::string_view playerId,
+                     int64_t fromTs,
+                     std::optional<int64_t> toTs = std::nullopt,
+                     int limit = 100);
 
-    /// @brief Fetch ELO history (v1, public).
+    /// Fetch match-by-match ELO history (v1, public).
+    ///
+    /// Endpoint: `/stats/v1/stats/time/users/{playerId}/games/{game}`
+    /// Query parameters:
+    /// - `size` page size (up to 2000)
+    /// - `page` zero-based index
+    /// - `from` (ms since epoch) **inclusive**
+    /// - `to`   (ms since epoch) **inclusive**
+    ///
+    /// @see https://docs.faceit.com/docs/data-api/data/#tag/Stats/operation/getUserGameStatsByTime
     /// @param playerId  FACEIT player UUID.
-    /// @param size      Entries per page.
-    /// @param page      Page index (0-based).
-    /// @param fromTs    Optional UNIX timestamp (inclusive).
-    /// @param toTs      Optional UNIX timestamp (exclusive).
-    /// @returns Vector of JSON entries.
-    boost::asio::awaitable<std::vector<json>>
-    getEloHistory(std::string_view        playerId,
-                  int                     size,
-                  int                     page,
-                  std::optional<int64_t>  fromTs = std::nullopt,
-                  std::optional<int64_t>  toTs   = std::nullopt);
+    /// @param size      Items per page.
+    /// @param page      Zero-based page index.
+    /// @param fromMs    Optional lower bound (ms since epoch).
+    /// @param toMs      Optional upper bound (ms since epoch).
+    /// @returns Vector of JSON history entries.
+    [[nodiscard]] boost::asio::awaitable<std::vector<json>>
+    get_elo_history(std::string_view playerId,
+                    int size,
+                    int page,
+                    std::optional<int64_t> fromMs = std::nullopt,
+                    std::optional<int64_t> toMs = std::nullopt);
 
-    /// @brief Fetch detailed match stats (v4).
+    /// Fetch detailed match stats (v4).
+    /// @see https://docs.faceit.com/docs/data-api/data/#tag/Matches/operation/getMatchStats
     /// @param matchId   FACEIT match UUID.
-    /// @returns Parsed JSON of match statistics.
-    boost::asio::awaitable<json>
-    getMatchStats(std::string_view matchId);
+    /// @returns Parsed JSON object of match statistics.
+    [[nodiscard]] boost::asio::awaitable<json> get_match_stats(std::string_view matchId);
 
 private:
-    /// @brief Core GET over TLS, returning parsed JSON and logging HTTP status reasons.
-    boost::asio::awaitable<json>
-    sendRequest(std::string_view host,
-                std::string      target,
-                bool             includeAuth);
+    /// Internal: send GET to v4 (Data API) with Bearer+Accept headers.
+    boost::asio::awaitable<json> send_v4_request(std::string_view host, std::string target);
 
-    /// @brief Build "/path?key=val&..." with URL-encoding.
+    /// Internal: send GET to v1 (Stats API) with **no** headers.
+    boost::asio::awaitable<json> send_v1_request(std::string_view host, std::string target);
+
+    /// Build `"/path?key=val&…"` with RFC3986 percent-encoding.
     static std::string
-    buildTarget(std::string_view base,
-                std::vector<std::pair<std::string_view,std::string>> const& queries);
+    build_target(std::string_view base,
+                 const std::vector<std::pair<std::string_view, std::string>>& qs);
 
-    /// @brief Percent-encode per RFC 3986.
-    static std::string
-    urlEncode(std::string_view value) noexcept;
+    /// Percent-encode per RFC3986.
+    static std::string url_encode(std::string_view value) noexcept;
 
-    std::string               apiKey_;
-    boost::asio::io_context   ioContext_;
-    boost::asio::ssl::context sslContext_;
+    std::string api_key_;
+    http_client::client http_;
 };
 
 } // namespace faceit

@@ -29,16 +29,6 @@ if (NOT DEFINED CMAKE_TOOLCHAIN_FILE
       CACHE STRING "" FORCE)
 endif()
 
-cmake_minimum_required(VERSION 4.0)
-project(
-  TwitchBot
-  VERSION 0.1.0
-  LANGUAGES CXX
-)
-
-# -------------------------------------------------------------------------------
-# Enforce C++23, no compiler extensions
-# -------------------------------------------------------------------------------
 set(CMAKE_CXX_STANDARD      23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS    OFF)

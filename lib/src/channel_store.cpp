@@ -1,179 +1,125 @@
-#include "channel_store.hpp"
-
+// C++ Standard Library
 #include <fstream>
+#include <future>
 #include <iostream>
-#include <filesystem>
-#include <sstream>
+#include <system_error>
 
-#include <toml++/toml.hpp>
+// Project
+#include "channel_store.hpp"
 
 namespace twitch_bot {
 
-    ChannelStore::ChannelStore(std::filesystem::path filepath)
-        : filename_(std::move(filepath))
+// Ensure all pending handlers finish
+ChannelStore::~ChannelStore()
+{
+    std::promise<void> p;
+    auto f = p.get_future();
+    boost::asio::post(strand_, [pr = std::move(p)]() mutable { pr.set_value(); });
+    f.wait();
+}
+
+void ChannelStore::load()
+{
+    if (!std::filesystem::exists(filename_))
+        return;
+
+    toml::table tbl;
+    try {
+        tbl = toml::parse_file(filename_.string());
+    } catch (const toml::parse_error& e) {
+        std::cerr << "[ChannelStore] parse error: " << e << '\n';
+        return;
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "[ChannelStore] fs error: " << e.what() << '\n';
+        return;
+    }
+
+    std::lock_guard<std::shared_mutex> guard{data_mutex_};
+    channel_data_.clear();
+    channel_data_.reserve(tbl.size());
+
+    for (auto& [key, node] : tbl) {
+        if (auto table = node.as_table()) {
+            ChannelInfo info;
+            if (auto n = table->get("alias"); n && n->is_string()) {
+                info.alias = n->value<std::string>();
+            }
+            if (auto n2 = table->get("faceit_nick"); n2 && n2->is_string()) {
+                info.faceit_nick = n2->value<std::string>();
+            }
+            channel_data_.emplace(std::piecewise_construct,
+                                  std::forward_as_tuple(key),
+                                  std::forward_as_tuple(std::move(info)));
+        }
+    }
+}
+
+void ChannelStore::save() const noexcept
+{
+    dirty_.store(true, std::memory_order_relaxed);
+
+    bool expected = false;
+    if (timer_scheduled_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        save_timer_.expires_after(std::chrono::seconds{5});
+        save_timer_.async_wait([this](auto const& ec) {
+            timer_scheduled_.store(false, std::memory_order_relaxed);
+            if (!ec && dirty_.exchange(false, std::memory_order_relaxed)) {
+                perform_save();
+            }
+        });
+    }
+}
+
+void ChannelStore::perform_save() const noexcept
+{
+    toml::table tbl = build_table();
+
+    // Write to temp file and rename
+    const auto tmp = filename_.string() + ".tmp";
     {
-    }
-
-    void ChannelStore::load() {
-        namespace fs = std::filesystem;
-
-        if (!fs::exists(filename_)) {
-            // No file yet -> nothing to load
+        std::ofstream out{tmp, std::ios::trunc};
+        if (!out) {
+            std::cerr << "[ChannelStore] cannot open " << tmp << '\n';
             return;
         }
 
-        toml::table tbl;
-        try {
-            tbl = toml::parse_file(filename_.string());
-        }
-        catch (const toml::parse_error& err) {
-            std::cerr << "[ChannelStore] Failed to parse TOML '"
-                << filename_ << "':\n"
-                << err << "\n";
-            return;
-        }
-        catch (const std::exception& ex) {
-            std::cerr << "[ChannelStore] Unexpected error while parsing TOML '"
-                << filename_ << "': " << ex.what() << "\n";
-            return;
-        }
-
-        // Clear existing data and reserve space
-        channelData_.clear();
-        channelData_.reserve(tbl.size());
-
-        // Each immediate child table [channel] is a channel name
-        for (auto const& [key, val] : tbl) {
-            if (auto const* channelTable = val.as_table()) {
-                ChannelInfo info;
-
-                // Optional "alias"
-                if (auto aliasNode = channelTable->get("alias");
-                    aliasNode && aliasNode->is_string())
-                {
-                    info.alias = aliasNode->value<std::string>();
-                }
-                else {
-                    info.alias = std::nullopt;
-                }
-
-                // Optional "faceit"
-                if (auto faceitNode = channelTable->get("faceit");
-                    faceitNode && faceitNode->is_string())
-                {
-                    info.faceit = faceitNode->value<std::string>();
-                }
-                else {
-                    info.faceit = std::nullopt;
-                }
-
-                // Insert into map; copies key once into the unordered_map
-                channelData_.emplace(std::string{ key }, std::move(info));
-            }
-            // else: ignore non-table entries
-        }
-    }
-
-    void ChannelStore::save() const {
-        toml::table tbl;
-
-        // Build a child table for each channel
-        for (auto const& [channel, info] : channelData_) {
-            toml::table channelTbl;
-            if (info.alias) {
-                channelTbl.insert("alias", *info.alias);
-            }
-            if (info.faceit) {
-                channelTbl.insert("faceit", *info.faceit);
-            }
-            tbl.insert(channel, std::move(channelTbl));
-        }
-
-        // Serialize to string
         std::ostringstream oss;
         oss << tbl;
-        const std::string serialized = oss.str();
-
-        // Write to a temporary file, then rename (atomic-ish)
-        const std::string tmpName = filename_.string() + ".tmp";
-        {
-            std::ofstream out(tmpName, std::ios::trunc);
-            if (!out) {
-                std::cerr << "[ChannelStore] Cannot open '"
-                    << tmpName << "' for writing\n";
-                return;
-            }
-            out << serialized;
-            if (!out) {
-                std::cerr << "[ChannelStore] Error while writing to '"
-                    << tmpName << "'\n";
-                return;
-            }
-        }
-
-        std::error_code ec;
-        std::filesystem::rename(std::filesystem::path{ tmpName }, filename_, ec);
-        if (ec) {
-            std::cerr << "[ChannelStore] Failed to overwrite '"
-                << filename_ << "' with '" << tmpName
-                << "': " << ec.message() << "\n";
-            std::filesystem::remove(std::filesystem::path{ tmpName }, ec);
-        }
-    }
-
-    void ChannelStore::addChannel(std::string_view channel) {
-        // This will only insert if it doesn't already exist
-        channelData_.try_emplace(std::string{ channel }, ChannelInfo{});
-    }
-
-    void ChannelStore::removeChannel(std::string_view channel) {
-        // Heterogeneous erase: no std::string allocation needed
-        channelData_.erase(channel);
-    }
-
-    std::vector<ChannelName> ChannelStore::allChannels() const {
-        std::vector<ChannelName> result;
-        result.reserve(channelData_.size());
-        for (auto const& [chan, _] : channelData_) {
-            result.push_back(chan);
-        }
-        return result;
-    }
-
-    std::optional<std::string> ChannelStore::getAlias(std::string_view channel) const {
-        auto it = channelData_.find(channel);
-        if (it == channelData_.end()) {
-            return std::nullopt;
-        }
-        return it->second.alias;
-    }
-
-    void ChannelStore::setAlias(std::string_view channel,
-        std::optional<std::string> alias)
-    {
-        auto it = channelData_.find(channel);
-        if (it == channelData_.end()) {
+        const auto data = oss.str();
+        out.write(data.data(), static_cast<std::streamsize>(data.size()));
+        if (!out) {
+            std::cerr << "[ChannelStore] write failed: " << tmp << '\n';
             return;
         }
-        it->second.alias = std::move(alias);
     }
 
-    std::optional<std::string> ChannelStore::getFaceitNick(std::string_view channel) const {
-        auto it = channelData_.find(channel);
-        if (it == channelData_.end()) {
-            return std::nullopt;
-        }
-        return it->second.faceit;
+    std::error_code ec;
+    std::filesystem::rename(tmp, filename_, ec);
+    if (ec) {
+        std::cerr << "[ChannelStore] rename failed: " << ec.message() << '\n';
+        std::filesystem::remove(tmp, ec);
     }
+}
 
-    void ChannelStore::setFaceitNick(std::string_view channel,
-        std::optional<std::string> faceit)
-    {
-        auto it = channelData_.find(channel);
-        if (it == channelData_.end()) {
-            return;
+toml::table ChannelStore::build_table() const
+{
+    toml::table tbl;
+    std::shared_lock<std::shared_mutex> guard{data_mutex_};
+
+    for (auto& [key, info] : channel_data_) {
+        toml::table entry;
+        if (info.alias) {
+            entry.insert("alias", *info.alias);
         }
-        it->second.faceit = std::move(faceit);
+        if (info.faceit_nick) {
+            entry.insert("faceit_nick", *info.faceit_nick);
+        }
+        if (info.faceit_id) {
+            entry.insert("faceit_id", *info.faceit_id);
+        }
+        tbl.insert(key, std::move(entry));
     }
+    return tbl;
+}
 
 } // namespace twitch_bot

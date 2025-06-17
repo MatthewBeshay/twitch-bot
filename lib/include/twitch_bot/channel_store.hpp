@@ -1,44 +1,35 @@
 #pragma once
 
-#include "utils/transparent_string.hpp"
-
+// C++ Standard Library
+#include <atomic>
+#include <filesystem>
+#include <optional>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
-#include <vector>
 #include <unordered_map>
-#include <optional>
-#include <filesystem>
+#include <vector>
+
+// 3rd-party
+#include <boost/asio.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <toml++/toml.hpp>
 
+// Project
+#include "utils/attributes.hpp"
+#include "utils/transparent_string.hpp"
 
 namespace twitch_bot {
 
-using ChannelName = std::string;
-
-/// Holds per-channel metadata: optional alias and optional FaceIT nickname.
 struct ChannelInfo {
     std::optional<std::string> alias;
-    std::optional<std::string> faceit;
+    std::optional<std::string> faceit_nick;
+    std::optional<std::string> faceit_id;
 };
 
-/**
- * @brief A simple in-process "database" of which channels we're in, plus two
- *        optional strings per channel:
- *         * alias  (set via !setnickname)
- *         * faceit (set via !setfaceit)
- *
- * Internally stored in a TOML file (default: "channels.toml"):
- *
- *   [somechannel]
- *   alias  = "someAlias"
- *   faceit = "FaceITName"
- *
- *   [otherchannel]
- *   alias  = "OtherAlias"
- *   # no "faceit" key -> std::nullopt
- */
-class ChannelStore {
+class ChannelStore
+{
 public:
     explicit ChannelStore(boost::asio::any_io_executor executor,
                           const std::filesystem::path &filepath = "channels.toml",
@@ -54,84 +45,117 @@ public:
     ChannelStore(const ChannelStore &) = delete;
     ChannelStore &operator=(const ChannelStore &) = delete;
 
-    /**
-     * @brief Read `filename_` (if it exists) and parse via toml++,
-     *        populating `channelData_`.
-     * @post  On success, `channelData_` is replaced with the on-disk contents.
-     * @post  On parse error or I/O failure, `channelData_` is left unchanged
-     *        and an error is logged.
-     */
+    // Load existing file, if any
     void load();
 
-    /**
-     * @brief Write the current state of `channelData_` out to `filename_`
-     *        as a TOML table (atomically, by writing to a ".tmp" then renaming).
-     * @post  On success, the file at `filename_` matches `channelData_`.
-     *        On failure, logs an error.
-     */
-    void save() const;
+    // Debounced async save
+    void save() const noexcept;
 
-    /**
-     * @brief Add a new channel (with no initial alias or faceit nick).
-     * @param channel  Name of the channel to add. If already present, does nothing.
-     */
-    void addChannel(std::string_view channel);
+    // Thread-safe modifiers and observers
+    TB_FORCE_INLINE void add_channel(std::string_view channel) noexcept
+    {
+        std::lock_guard<std::shared_mutex> guard{data_mutex_};
+        channel_data_.emplace(std::piecewise_construct, std::forward_as_tuple(channel),
+                              std::forward_as_tuple());
+    }
 
-    /**
-     * @brief Remove a channel entirely from the store.
-     * @param channel  Name of the channel to remove. If not present, does nothing.
-     */
-    void removeChannel(std::string_view channel);
+    TB_FORCE_INLINE void remove_channel(std::string_view channel) noexcept
+    {
+        std::lock_guard<std::shared_mutex> guard{data_mutex_};
+        channel_data_.erase(channel);
+    }
 
-    /**
-     * @brief Return a vector of all channel names currently stored.
-     * @return A list of channel names.
-     */
-    std::vector<ChannelName> allChannels() const;
+    TB_FORCE_INLINE bool contains(std::string_view channel) const noexcept
+    {
+        std::shared_lock<std::shared_mutex> guard{data_mutex_};
+        return channel_data_.find(channel) != channel_data_.end();
+    }
 
-    /**
-     * @brief Optionally get the stored "alias" for a given channel.
-     * @param channel  Name of the channel to query.
-     * @return `std::nullopt` if the channel is not present or has no alias,
-     *         otherwise the alias string.
-     */
-    std::optional<std::string> getAlias(std::string_view channel) const;
+    TB_FORCE_INLINE std::optional<std::string_view>
+    get_alias(std::string_view channel) const noexcept
+    {
+        std::shared_lock<std::shared_mutex> guard{data_mutex_};
+        if (auto it = channel_data_.find(channel); it != channel_data_.end() && it->second.alias) {
+            const auto &s = *it->second.alias;
+            return std::string_view{s.data(), s.size()};
+        }
+        return std::nullopt;
+    }
 
-    /**
-     * @brief Set (or clear) the stored "alias" for a given channel.
-     * @param channel  Name of the channel to modify.
-     * @param alias    If non-nullopt, sets the alias; if `std::nullopt`, clears it.
-     * @post  If the channel is not already present, does nothing.
-     */
-    void setAlias(std::string_view channel, std::optional<std::string> alias);
+    TB_FORCE_INLINE void set_alias(std::string_view channel,
+                                   std::optional<std::string> alias) noexcept
+    {
+        std::lock_guard<std::shared_mutex> guard{data_mutex_};
+        if (auto it = channel_data_.find(channel); it != channel_data_.end()) {
+            it->second.alias = std::move(alias);
+        }
+    }
 
-    /**
-     * @brief Optionally get the stored "faceit" nickname for a given channel.
-     * @param channel  Name of the channel to query.
-     * @return `std::nullopt` if the channel is not present or has no faceit nick,
-     *         otherwise the faceit string.
-     */
-    std::optional<std::string> getFaceitNick(std::string_view channel) const;
+    TB_FORCE_INLINE std::optional<std::string_view>
+    get_faceit_nick(std::string_view channel) const noexcept
+    {
+        std::shared_lock<std::shared_mutex> guard{data_mutex_};
+        if (auto it = channel_data_.find(channel);
+            it != channel_data_.end() && it->second.faceit_nick) {
+            const auto &s = *it->second.faceit_nick;
+            return std::string_view{s.data(), s.size()};
+        }
+        return std::nullopt;
+    }
 
-    /**
-     * @brief Set (or clear) the stored "faceit" nickname for a given channel.
-     * @param channel  Name of the channel to modify.
-     * @param faceit   If non-nullopt, sets the faceit nick; if `std::nullopt`, clears it.
-     * @post  If the channel is not already present, does nothing.
-     */
-    void setFaceitNick(std::string_view channel, std::optional<std::string> faceit);
+    TB_FORCE_INLINE void set_faceit_nick(std::string_view channel,
+                                         std::optional<std::string> nick) noexcept
+    {
+        std::lock_guard<std::shared_mutex> guard{data_mutex_};
+        if (auto it = channel_data_.find(channel); it != channel_data_.end()) {
+            it->second.faceit_nick = std::move(nick);
+        }
+    }
+
+    TB_FORCE_INLINE std::optional<std::string_view>
+    get_faceit_id(std::string_view channel) const noexcept
+    {
+        std::shared_lock<std::shared_mutex> guard{data_mutex_};
+        if (auto it = channel_data_.find(channel);
+            it != channel_data_.end() && it->second.faceit_id) {
+            auto &s = *it->second.faceit_id;
+            return std::string_view{s.data(), s.size()};
+        }
+        return std::nullopt;
+    }
+
+    TB_FORCE_INLINE void set_faceit_id(std::string_view channel,
+                                       std::optional<std::string> id) noexcept
+    {
+        std::lock_guard<std::shared_mutex> guard{data_mutex_};
+        if (auto it = channel_data_.find(channel); it != channel_data_.end()) {
+            it->second.faceit_id = std::move(id);
+            save();
+        }
+    }
+
+    // Populate caller-supplied vector to reuse capacity
+    void channel_names(std::vector<std::string_view> &out) const noexcept
+    {
+        std::shared_lock<std::shared_mutex> guard{data_mutex_};
+        out.clear();
+        out.reserve(channel_data_.size());
+        for (auto &[key, info] : channel_data_)
+            out.push_back(key);
+    }
 
 private:
-    std::filesystem::path filename_;
+    toml::table build_table() const;
+    void perform_save() const noexcept;
 
-    // heterogeneous-lookup map: key = channel name, value = ChannelInfo
-    // Now using TransparentStringHash / TransparentStringEq for zero-overhead lookups.
-    std::unordered_map<
-        std::string,
-        ChannelInfo,
-        TransparentStringHash,
-        TransparentStringEq
-    > channelData_;
+    mutable std::shared_mutex data_mutex_;
+    std::unordered_map<std::string, ChannelInfo, TransparentStringHash, TransparentStringEq>
+        channel_data_;
+    boost::asio::strand<boost::asio::any_io_executor> strand_;
+    const std::filesystem::path filename_;
+    mutable std::atomic<bool> dirty_{false};
+    mutable std::atomic<bool> timer_scheduled_{false};
+    mutable boost::asio::steady_timer save_timer_;
 };
 
 } // namespace twitch_bot
