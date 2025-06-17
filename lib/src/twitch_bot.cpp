@@ -64,11 +64,11 @@ TwitchBot::TwitchBot(std::string oauth_token,
             std::string_view target = args.empty() ? user : args;
 
             if (channel_store_.contains(target)) {
-                std::array<boost::asio::const_buffer, 5> msg{
+                std::array<boost::asio::const_buffer, 5> buffers{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :Already in channel ", 22), boost::asio::buffer(target),
                      boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(msg);
+                co_await irc_client_.send_buffers(buffers);
                 co_return;
             }
 
@@ -117,11 +117,11 @@ TwitchBot::TwitchBot(std::string oauth_token,
             std::string_view target = args.empty() ? user : args;
 
             if (!channel_store_.contains(target)) {
-                std::array<boost::asio::const_buffer, 5> msg{
+                std::array<boost::asio::const_buffer, 5> buffers{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :Not in channel ", 19), boost::asio::buffer(target),
                      boost::asio::buffer(CRLF)}};
-                co_await irc_client_.send_buffers(msg);
+                co_await irc_client_.send_buffers(buffers);
                 co_return;
             }
 

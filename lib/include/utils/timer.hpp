@@ -28,7 +28,8 @@ public:
 
     /// Return the duration since construction or last reset().
     /// @return A clock::duration representing the elapsed time.
-    clock::duration elapsed() const noexcept
+    [[nodiscard]]
+    auto elapsed() const noexcept -> clock::duration
     {
         return clock::now() - start_;
     }

@@ -28,6 +28,10 @@ namespace http_client {
 using json = glz::json_t;
 using result = glz::expected<json, glz::error_ctx>;
 
+// avoid magic numbers
+inline constexpr std::size_t kDefaultExpectedHosts = 16;
+inline constexpr std::size_t kDefaultConnectionsPerHost = 4;
+
 inline constexpr glz::opts json_opts{.null_terminated = true,
                                      .error_on_unknown_keys = false,
                                      .minified = true};
@@ -43,9 +47,9 @@ public:
 
     /// Initialise client with executor and SSL context; reserve pool capacity
     client(boost::asio::any_io_executor executor,
-           boost::asio::ssl::context &ssl_context,
-           std::size_t expected_hosts = 16,
-           std::size_t expected_conns_per_host = 4) noexcept;
+           boost::asio::ssl::context& ssl_context,
+           std::size_t expected_hosts = kDefaultExpectedHosts,
+           std::size_t expected_conns_per_host = kDefaultConnectionsPerHost) noexcept;
 
     allocator_type get_allocator() const noexcept;
 
@@ -74,7 +78,8 @@ private:
                                            http_headers headers) noexcept;
 
     boost::asio::any_io_executor executor_;
-    boost::asio::ssl::context &ssl_context_;
+    // hold as a pointer to avoid reference data-member
+    boost::asio::ssl::context* ssl_context_;
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::strand<boost::asio::any_io_executor> strand_;
     std::unordered_map<std::string,
@@ -85,7 +90,8 @@ private:
     /// Internal memory resource used for handler allocators.
     /// Mutable so get_allocator() can be const - safe, no observable state change.
     mutable std::pmr::monotonic_buffer_resource handler_buffer_;
-    const std::size_t expected_conns_per_host_;
+    // drop const so moves work correctly
+    std::size_t expected_conns_per_host_;
 };
 
 } // namespace http_client

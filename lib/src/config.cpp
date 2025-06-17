@@ -11,7 +11,7 @@
 
 namespace env {
 
-Config Config::parse_config(const std::filesystem::path &path)
+auto Config::parse_config(const std::filesystem::path &path) -> Config
 {
     const auto path_str = path.string();
     toml::table tbl;
@@ -19,31 +19,54 @@ Config Config::parse_config(const std::filesystem::path &path)
     try {
         tbl = toml::parse_file(path_str);
     } catch (const toml::parse_error &e) {
-        throw EnvError("TOML parse error in '" + path_str + "': " + e.what());
+        std::string err = "TOML parse error in '";
+        err += path_str;
+        err += "': ";
+        err += e.what();
+        throw EnvError(err);
     } catch (const std::filesystem::filesystem_error &e) {
-        throw EnvError("Cannot read config file '" + path_str + "': " + e.what());
+        std::string err = "Cannot read config file '";
+        err += path_str;
+        err += "': ";
+        err += e.what();
+        throw EnvError(err);
     }
 
     // Fetch a non-empty string at the given key path
     auto fetch_string = [&](std::initializer_list<std::string_view> keys) -> std::string {
         const toml::node *node = &tbl;
 
-        for (auto key : keys) {
+        for (auto key_part : keys) {
             const auto *table_ptr = node->as_table();
             if (!table_ptr) {
-                throw EnvError("Expected table at '" + std::string{key} + "' in " + path_str);
+                std::string dotted;
+                for (auto part : keys) {
+                    if (!dotted.empty()) {
+                        dotted.push_back('.');
+                    }
+                    dotted.append(part);
+                }
+                std::string err = "Expected table at '";
+                err += dotted;
+                err += "' in ";
+                err += path_str;
+                throw EnvError(err);
             }
 
-            const auto *found = table_ptr->get(key);
+            const auto *found = table_ptr->get(key_part);
             if (!found) {
                 std::string dotted;
-                for (auto k : keys) {
+                for (auto part : keys) {
                     if (!dotted.empty()) {
-                        dotted += '.';
+                        dotted.push_back('.');
                     }
-                    dotted += k;
+                    dotted.append(part);
                 }
-                throw EnvError("Missing key '" + dotted + "' in " + path_str);
+                std::string err = "Missing key '";
+                err += dotted;
+                err += "' in ";
+                err += path_str;
+                throw EnvError(err);
             }
 
             node = found;
@@ -59,18 +82,18 @@ Config Config::parse_config(const std::filesystem::path &path)
         throw EnvError("Non-string value in " + path_str);
     };
 
-    ChatConfig chat_cfg{.oauth_token=fetch_string({"twitch", "chat", "oauth_token"}),
-                        .refresh_token=fetch_string({"twitch", "chat", "refresh_token"})};
+    ChatConfig chat_cfg{.oauth_token = fetch_string({"twitch", "chat", "oauth_token"}),
+                        .refresh_token = fetch_string({"twitch", "chat", "refresh_token"})};
 
-    AppConfig app_cfg{.client_id=fetch_string({"twitch", "app", "client_id"}),
-                      .client_secret=fetch_string({"twitch", "app", "client_secret"})};
+    AppConfig app_cfg{.client_id = fetch_string({"twitch", "app", "client_id"}),
+                      .client_secret = fetch_string({"twitch", "app", "client_secret"})};
 
     BotConfig bot_cfg{fetch_string({"twitch", "bot", "channel"})};
 
     return {std::move(chat_cfg), std::move(app_cfg), std::move(bot_cfg)};
 }
 
-Config Config::load_file(const std::filesystem::path &path)
+auto Config::load_file(const std::filesystem::path &path) -> Config
 {
     if (path.string().empty()) {
         throw EnvError("Config file path must not be empty");
@@ -78,7 +101,7 @@ Config Config::load_file(const std::filesystem::path &path)
     return parse_config(path);
 }
 
-Config Config::load()
+auto Config::load() -> Config
 {
     const auto default_path = std::filesystem::current_path() / "config.toml";
 
@@ -89,7 +112,7 @@ Config Config::load()
     return parse_config(default_path);
 }
 
-EnvError::EnvError(const std::string& msg) noexcept : std::runtime_error{msg}
+EnvError::EnvError(const std::string &msg) noexcept : std::runtime_error{msg}
 {
 }
 

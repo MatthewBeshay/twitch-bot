@@ -30,16 +30,16 @@ IrcClient::IrcClient(boost::asio::any_io_executor executor,
                      std::string_view nickname) noexcept
     : ws_stream_{boost::asio::make_strand(executor), ssl_context}
     , ping_timer_{executor}
-    , read_buffer_{}
     , oauth_token_{oauth_token}
     , nickname_{nickname}
 {
 }
 
-boost::asio::awaitable<void> IrcClient::connect(std::span<const std::string_view> channels) noexcept
+auto IrcClient::connect(std::span<const std::string_view> channels) noexcept
+    -> boost::asio::awaitable<void>
 {
-    static constexpr char host_name[] = "irc-ws.chat.twitch.tv";
-    static constexpr char port_str[] = "443";
+    static char host_name[] = "irc-ws.chat.twitch.tv";
+    static char port_str[] = "443";
 
     // Resolve and connect TCP
     auto executor = co_await boost::asio::this_coro::executor;
@@ -63,12 +63,18 @@ boost::asio::awaitable<void> IrcClient::connect(std::span<const std::string_view
     co_await ws_stream_.async_handshake(host_name, "/", use_awaitable);
 
     // Authenticate
+
     {
-        std::array<const_buffer, 2> bufs{buffer("PASS ", 5), buffer(oauth_token_)};
+        static constexpr std::string_view pass_cmd{"PASS "};
+        std::array<const_buffer, 2> bufs{buffer(pass_cmd.data(), pass_cmd.size()),
+                                         buffer(oauth_token_)};
         co_await send_buffers(bufs);
     }
+
     {
-        std::array<const_buffer, 2> bufs{buffer("NICK ", 5), buffer(nickname_)};
+        static constexpr std::string_view nick_cmd{"NICK "};
+        std::array<const_buffer, 2> bufs{buffer(nick_cmd.data(), nick_cmd.size()),
+                                         buffer(nickname_)};
         co_await send_buffers(bufs);
     }
 
@@ -82,21 +88,26 @@ boost::asio::awaitable<void> IrcClient::connect(std::span<const std::string_view
 
     // Join channels
     for (auto channel : channels) {
-        std::array<const_buffer, 5> bufs{buffer("JOIN", 4), buffer(" ", 1), buffer("#", 1),
-                                         buffer(channel), buffer(k_crlf.data(), k_crlf.size())};
+        static constexpr std::string_view join_cmd{"JOIN"};
+        static constexpr std::string_view space{" "};
+        static constexpr std::string_view hash{"#"};
+        std::array<const_buffer, 5> bufs{buffer(join_cmd.data(), join_cmd.size()),
+                                         buffer(space.data(), space.size()),
+                                         buffer(hash.data(), hash.size()), buffer(channel),
+                                         buffer(k_crlf.data(), k_crlf.size())};
         co_await send_buffers(bufs);
     }
 }
 
-boost::asio::awaitable<void> IrcClient::send_line(std::string_view message) noexcept
+auto IrcClient::send_line(std::string_view message) noexcept -> boost::asio::awaitable<void>
 {
     std::array<const_buffer, 2> bufs{buffer(message.data(), message.size()),
                                      buffer(k_crlf.data(), k_crlf.size())};
     co_await send_buffers(bufs);
 }
 
-boost::asio::awaitable<void>
-IrcClient::send_buffers(std::span<const boost::asio::const_buffer> buffers) noexcept
+auto IrcClient::send_buffers(std::span<const boost::asio::const_buffer> buffers) noexcept
+    -> boost::asio::awaitable<void>
 {
     try {
         ws_stream_.text(true);
@@ -106,7 +117,7 @@ IrcClient::send_buffers(std::span<const boost::asio::const_buffer> buffers) noex
     }
 }
 
-boost::asio::awaitable<void, boost::asio::any_io_executor> IrcClient::ping_loop() noexcept
+auto IrcClient::ping_loop() noexcept -> boost::asio::awaitable<void, boost::asio::any_io_executor>
 {
     for (;;) {
         ping_timer_.expires_after(std::chrono::minutes{4});
@@ -115,7 +126,7 @@ boost::asio::awaitable<void, boost::asio::any_io_executor> IrcClient::ping_loop(
     }
 }
 
-void IrcClient::close() noexcept
+auto IrcClient::close() noexcept -> void
 {
     // Stop ping loop
     ping_timer_.cancel();

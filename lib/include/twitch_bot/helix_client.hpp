@@ -13,9 +13,8 @@
 #include <boost/asio/ssl/context.hpp>
 
 // Project
-#include "utils/attributes.hpp"
-
 #include "http_client.hpp"
+#include "utils/attributes.hpp"
 
 namespace twitch_bot {
 
@@ -24,8 +23,8 @@ using json = glz::json_t;
 
 /// Data returned when channel goes live.
 struct stream_start_result {
-    bool is_live; ///< true if channel is live
-    std::chrono::milliseconds start_time; ///< ms since UNIX epoch when live
+    bool is_live{false}; ///< true if channel is live
+    std::chrono::milliseconds start_time{0}; ///< ms since UNIX epoch when live
 };
 
 /// OAuth2 + streams client for Twitch Helix.
@@ -39,21 +38,27 @@ public:
                 std::string_view client_id,
                 std::string_view client_secret) noexcept;
 
+    // No copies, but allow moves
     HelixClient(const HelixClient &) = delete;
     HelixClient &operator=(const HelixClient &) = delete;
+
+    HelixClient(HelixClient &&) noexcept = default;
+    HelixClient &operator=(HelixClient &&) noexcept = default;
+
     ~HelixClient() = default;
 
     /// Ensure valid OAuth2 token.
-    boost::asio::awaitable<void> ensure_token() noexcept;
+    auto ensure_token() noexcept -> boost::asio::awaitable<void>;
 
     /// Get stream start for given channel.
-    boost::asio::awaitable<std::optional<stream_start_result>>
-    get_stream_start(std::string_view channel_id) noexcept;
+    auto get_stream_start(std::string_view channel_id) noexcept
+        -> boost::asio::awaitable<std::optional<stream_start_result>>;
 
 private:
     /// Parse ISO-8601 "YYYY-MM-DDThh:mm:ssZ" to ms since epoch.
-    TB_FORCE_INLINE static std::optional<std::chrono::milliseconds>
-    parse_iso8601_ms(std::string_view timestamp) noexcept;
+    TB_FORCE_INLINE
+    static auto parse_iso8601_ms(std::string_view timestamp) noexcept
+        -> std::optional<std::chrono::milliseconds>;
 
     // Prebuilt buffers
     std::string token_body_;

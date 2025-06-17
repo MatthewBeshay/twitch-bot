@@ -22,6 +22,11 @@
 
 namespace twitch_bot {
 
+// default expected size to avoid magic numbers
+inline constexpr std::size_t kDefaultExpectedChannels = 256;
+// threshold for rehashing; uppercase F on the float suffix
+inline constexpr float kChannelDataMaxLoadFactor = 0.5F;
+
 struct ChannelInfo {
     std::optional<std::string> alias;
 };
@@ -29,24 +34,29 @@ struct ChannelInfo {
 class ChannelStore
 {
 public:
+    // pass executor by value and move itr in
     explicit ChannelStore(boost::asio::any_io_executor executor,
                           const std::filesystem::path &filepath = "channels.toml",
-                          std::size_t expected_channels = 256)
-        : strand_{std::move(executor)}, filename_{filepath}, save_timer_{strand_}
+                          std::size_t expected_channels = kDefaultExpectedChannels)
+        : strand_{std::move(executor)}
+        , filename_{filepath}
+        , dirty_{false}
+        , timer_scheduled_{false}
+        , save_timer_{strand_}
     {
         channel_data_.reserve(expected_channels);
-        channel_data_.max_load_factor(0.5f);
+        channel_data_.max_load_factor(kChannelDataMaxLoadFactor);
     }
 
     ~ChannelStore();
 
     ChannelStore(const ChannelStore &) = delete;
     ChannelStore &operator=(const ChannelStore &) = delete;
+    ChannelStore(ChannelStore &&) = delete;
+    ChannelStore &operator=(ChannelStore &&) = delete;
 
-    // Load existing file, if any
     void load();
 
-    // Debounced async save
     void save() const noexcept;
 
     // Thread-safe modifiers and observers
@@ -73,9 +83,9 @@ public:
     get_alias(std::string_view channel) const noexcept
     {
         std::shared_lock<std::shared_mutex> guard{data_mutex_};
-        if (auto it = channel_data_.find(channel); it != channel_data_.end() && it->second.alias) {
-            const auto &s = *it->second.alias;
-            return std::string_view{s.data(), s.size()};
+        if (auto itr = channel_data_.find(channel); itr != channel_data_.end() && itr->second.alias) {
+            const auto &alias_str = *itr->second.alias;
+            return std::string_view{alias_str.data(), alias_str.size()};
         }
         return std::nullopt;
     }
@@ -84,8 +94,8 @@ public:
                                    std::optional<std::string> alias) noexcept
     {
         std::lock_guard<std::shared_mutex> guard{data_mutex_};
-        if (auto it = channel_data_.find(channel); it != channel_data_.end()) {
-            it->second.alias = std::move(alias);
+        if (auto itr = channel_data_.find(channel); itr != channel_data_.end()) {
+            itr->second.alias = std::move(alias);
         }
     }
 
