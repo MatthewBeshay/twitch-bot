@@ -1,15 +1,16 @@
 ﻿// C++ Standard Library
 #include <chrono>
-#include <string>
 #include <system_error>
 
 // 3rd-party
 #include <boost/asio/connect.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/use_awaitable.hpp>
+
 #include <boost/beast/core.hpp>
 #include <boost/beast/ssl.hpp>
 #include <boost/beast/version.hpp>
+
 #include <openssl/ssl.h>
 
 // Project
@@ -29,13 +30,8 @@ inline constexpr std::size_t kBufferSizeKilobytes = 16;
 } // unnamed namespace
 
 namespace http_client {
+namespace detail {
 
-//----------------------------------------------------------------------------//
-// Helper functions & constants with internal linkage
-//----------------------------------------------------------------------------//
-namespace {
-
-    /// Build a key "host:port" for connection pooling.
     inline std::string make_pool_key(std::string_view host, std::string_view port) noexcept
     {
         std::string key;
@@ -48,7 +44,6 @@ namespace {
         return key;
     }
 
-    /// Format an HTTP error message.
     inline std::string
     make_error_msg(std::string_view host, std::string_view target, int status) noexcept
     {
@@ -58,11 +53,8 @@ namespace {
         return msg;
     }
 
-} // namespace (anonymous)
+} // namespace detail
 
-//----------------------------------------------------------------------------//
-// client::connection — pooled HTTPS connection
-//----------------------------------------------------------------------------//
 struct client::connection {
     boost::beast::ssl_stream<boost::beast::tcp_stream> stream;
     static constexpr std::size_t buffer_size = kBufferSizeKilobytes * 1024U;
@@ -79,9 +71,6 @@ struct client::connection {
     }
 };
 
-//----------------------------------------------------------------------------//
-// client ctor / allocator
-//----------------------------------------------------------------------------//
 client::client(boost::asio::any_io_executor executor,
                boost::asio::ssl::context& ssl_context,
                std::size_t expected_hosts,
@@ -108,19 +97,17 @@ auto client::perform(boost::beast::http::verb method,
                      std::string_view body,
                      http_headers headers) noexcept -> boost::asio::awaitable<result>
 {
-    // Always run on the strand
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
-    // Try to grab an existing connection from the pool
-    auto key = make_pool_key(host, port);
-    auto& vec = pool_[key]; // creates vector on‐demand
+    auto key = detail::make_pool_key(host, port);
+    auto it = pool_.find(key);
     std::shared_ptr<connection> conn;
-    if (!vec.empty()) {
-        conn = std::move(vec.back());
-        vec.pop_back();
+
+    if (it != pool_.end() && !it->second.empty()) {
+        conn = std::move(it->second.back());
+        it->second.pop_back();
     }
 
-    // If none, establish a new one
     if (!conn) {
         if (it == pool_.end()) {
             auto& vec = pool_[key];
@@ -158,11 +145,10 @@ auto client::perform(boost::beast::http::verb method,
         req.prepare_payload();
     }
 
-    // Send
     conn->reset();
+
     co_await boost::beast::http::async_write(conn->stream, req, boost::asio::use_awaitable);
 
-    // Receive
     boost::beast::http::response<boost::beast::http::string_body> res;
     co_await boost::beast::http::async_read(conn->stream, conn->buffer, res,
                                             boost::asio::use_awaitable);
@@ -173,17 +159,15 @@ auto client::perform(boost::beast::http::verb method,
         throw std::runtime_error(detail::make_error_msg(host, target, status));
     }
 
-    // Parse JSON
-    std::string payload = std::move(res.body());
+    std::string body_buf = std::move(res.body());
     json j;
-    auto ec = glz::read<json_opts>(j, payload);
+    auto ec = glz::read<json_opts>(j, body_buf);
     if (ec) {
-        vec.push_back(std::move(conn));
+        it->second.push_back(std::move(conn));
         co_return glz::unexpected(ec);
     }
 
-    // Recycle and return
-    vec.push_back(std::move(conn));
+    it->second.push_back(std::move(conn));
     co_return j;
 }
 

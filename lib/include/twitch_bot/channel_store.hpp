@@ -135,27 +135,6 @@ public:
     }
 
     TB_FORCE_INLINE std::optional<std::string_view>
-    get_faceit_nick(std::string_view channel) const noexcept
-    {
-        std::shared_lock<std::shared_mutex> guard{data_mutex_};
-        if (auto it = channel_data_.find(channel);
-            it != channel_data_.end() && it->second.faceit_nick) {
-            const auto &s = *it->second.faceit_nick;
-            return std::string_view{s.data(), s.size()};
-        }
-        return std::nullopt;
-    }
-
-    TB_FORCE_INLINE void set_faceit_nick(std::string_view channel,
-                                         std::optional<std::string> nick) noexcept
-    {
-        std::lock_guard<std::shared_mutex> guard{data_mutex_};
-        if (auto it = channel_data_.find(channel); it != channel_data_.end()) {
-            it->second.faceit_nick = std::move(nick);
-        }
-    }
-
-    TB_FORCE_INLINE std::optional<std::string_view>
     get_faceit_id(std::string_view channel) const noexcept
     {
         std::shared_lock<std::shared_mutex> guard{data_mutex_};
@@ -177,27 +156,6 @@ public:
         }
     }
 
-    TB_FORCE_INLINE std::optional<std::string_view>
-    get_faceit_id(std::string_view channel) const noexcept
-    {
-        std::shared_lock<std::shared_mutex> guard{data_mutex_};
-        if (auto it = channel_data_.find(channel);
-            it != channel_data_.end() && it->second.faceit_id) {
-            auto &s = *it->second.faceit_id;
-            return std::string_view{s.data(), s.size()};
-        }
-        return std::nullopt;
-    }
-
-    TB_FORCE_INLINE void set_faceit_id(std::string_view channel,
-                                       std::optional<std::string> id) noexcept
-    {
-        std::lock_guard<std::shared_mutex> guard{data_mutex_};
-        if (auto it = channel_data_.find(channel); it != channel_data_.end()) {
-            it->second.faceit_id = std::move(id);
-            save();
-        }
-    }
 
     /// Copy the current channel names into \p out (capacity reused).
     void channel_names(std::vector<std::string_view>& out) const noexcept
