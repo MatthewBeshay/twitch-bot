@@ -23,7 +23,7 @@ if (WIN32)
 endif()
 
 target_sources(TwitchBotCore
-  PUBLIC
+  PRIVATE
     ${TB_HEADERS}
 )
 

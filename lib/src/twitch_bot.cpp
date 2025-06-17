@@ -41,14 +41,12 @@ TwitchBot::TwitchBot(std::string oauth_token,
             auto channel = msg.params[0];
             auto user = msg.prefix;
             auto args = msg.trailing;
-            bool is_mod = msg.is_moderator;
-            bool is_broadcaster = msg.is_broadcaster;
 
             // only in control channel
             if (channel != control_channel_)
                 co_return;
 
-            if (!args.empty() && !is_broadcaster && !is_mod)
+            if (!args.empty() && !isPrivileged(msg))
                 co_return;
 
             std::string_view target = args.empty() ? user : args;
@@ -84,13 +82,11 @@ TwitchBot::TwitchBot(std::string oauth_token,
             auto channel = msg.params[0];
             auto user = msg.prefix;
             auto args = msg.trailing;
-            bool is_mod = msg.is_moderator;
-            bool is_broadcaster = msg.is_broadcaster;
 
             if (channel != control_channel_)
                 co_return;
 
-            if (!args.empty() && !is_broadcaster && !is_mod)
+            if (!args.empty() && !isPrivileged(msg))
                 co_return;
 
             std::string_view target = args.empty() ? user : args;

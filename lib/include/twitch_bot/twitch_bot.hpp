@@ -47,6 +47,15 @@ public:
     void add_chat_listener(chat_listener_t listener);
 
 private:
+    static bool isPrivileged(const IrcMessage &msg) noexcept
+    {
+        if (msg.is_broadcaster)
+            return true;
+        if (msg.is_moderator)
+            return true;
+        return msg.prefix == "";
+    }
+
     boost::asio::awaitable<void> run_bot() noexcept;
 
     static constexpr std::string_view CRLF{"\r\n"};
