@@ -3,23 +3,11 @@ project(TwitchBot VERSION 0.1.0 DESCRIPTION "Twitch chat bot" LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(MY_TIDY_CHECKS
-  clang-diagnostic-*,
-  bugprone-*,
-  performance-*,
-  modernize-*,
-  readability-*
-)
-
-set(MY_TIDY_HEADER_FILTER "^(app|lib/src|lib/include/(twitch_bot|utils))/")
-
 set(CMAKE_CXX_CLANG_TIDY
-  clang-tidy;
-  -checks=${MY_TIDY_CHECKS};
-  -warnings-as-errors=modernize-use-nullptr;
-  -header-filter=${MY_TIDY_HEADER_FILTER};
-  -system-headers=false;
-  -format-style=file
+    clang-tidy
+    -p=${CMAKE_BINARY_DIR}
+    -warnings-as-errors=modernize-use-nullptr
+    -format-style=file
 )
 
 if (NOT DEFINED CMAKE_TOOLCHAIN_FILE
