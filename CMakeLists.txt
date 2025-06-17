@@ -7,16 +7,6 @@ project(TwitchBot
   LANGUAGES   CXX
 )
 
-# export compile_commands.json for clang-tidy, language servers, etc
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-option(ENABLE_CLANG_TIDY "Run clang-tidy as part of the build" OFF)
-if (ENABLE_CLANG_TIDY)
-  set(CMAKE_CXX_CLANG_TIDY
-      "clang-tidy;-p=${CMAKE_BINARY_DIR};-fix;-fix-errors;-format-style=file"
-      CACHE STRING "" FORCE)
-endif()
-
 # C++ standard
 set(CMAKE_CXX_STANDARD        23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
