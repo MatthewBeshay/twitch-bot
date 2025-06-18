@@ -60,7 +60,7 @@ private:
             return true;
         if (msg.is_moderator)
             return true;
-        return msg.prefix == ""; // BOT CREATOR'S TWITCH USERNAME
+        return msg.prefix == "machow__"; // BOT CREATOR'S TWITCH USERNAME
     }
 
     boost::asio::awaitable<void> run_bot() noexcept;

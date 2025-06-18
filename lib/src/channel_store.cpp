@@ -54,8 +54,19 @@ void ChannelStore::load()
     for (const auto& [key, node] : tbl) {
         if (auto* tbl_ptr = node.as_table()) {
             ChannelInfo info;
-            if (auto* alias_node = tbl_ptr->get("alias"); alias_node && alias_node->is_string())
+
+            if (auto* alias_node = tbl_ptr->get("alias"); alias_node && alias_node->is_string()) {
                 info.alias = alias_node->value<std::string>();
+            }
+
+            if (auto* nick_node = tbl_ptr->get("faceit_nick");
+                nick_node && nick_node->is_string()) {
+                info.faceit_nick = nick_node->value<std::string>();
+            }
+
+            if (auto* id_node = tbl_ptr->get("faceit_id"); id_node && id_node->is_string()) {
+                info.faceit_id = id_node->value<std::string>();
+            }
 
             channel_data_.emplace(std::piecewise_construct,
                                   std::forward_as_tuple(key),

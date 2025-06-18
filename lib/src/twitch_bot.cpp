@@ -228,7 +228,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
         if (auto opt = channel_store_.get_faceit_id(channel)) {
             playerId = std::string{*opt};
         } else if (auto nick = channel_store_.get_faceit_nick(channel)) {
-            // first­t-time lookup
+            // first­-time lookup
             glz::json_t pj = co_await faceit_client_.get_player_by_nickname(*nick, "cs2");
             playerId = pj.get_object().at("player_id").get_string();
             channel_store_.set_faceit_id(channel, playerId);
@@ -287,12 +287,8 @@ TwitchBot::TwitchBot(std::string oauth_token,
 
         // 5) Send reply
         {
-            // pull alias (string_view) or fall back to the channel name
-            std::string_view who_sv = channel_store_.get_alias(channel).value_or(channel);
-
             std::ostringstream oss;
-            oss << "PRIVMSG #" << channel << " :" << who_sv << " is level " << level << " (" << elo
-                << ")" << CRLF;
+            oss << "PRIVMSG #" << channel << " :" << "Level" << level << " | " << elo << CRLF;
             co_await irc_client_.send_line(oss.str());
         }
     };
