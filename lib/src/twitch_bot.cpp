@@ -234,7 +234,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             channel_store_.set_faceit_id(channel, playerId);
         } else {
             std::ostringstream oss;
-            oss << "PRIVMSG #" << channel << " :No FACEIT nick set..." << CRLF;
+            oss << "PRIVMSG #" << channel << " :No FACEIT nickname set" << CRLF;
             co_await irc_client_.send_line(oss.str());
             co_return;
         }
@@ -309,13 +309,14 @@ TwitchBot::TwitchBot(std::string oauth_token,
             auto channel = msg.params[0];
 
             // 1) Check stream state
-            auto stream_opt = co_await helix_client_.get_stream_start(channel);
-            if (!stream_opt) {
+            auto status_opt = co_await helix_client_.get_stream_status(channel);
+            if (!status_opt || !status_opt->is_live) {
                 ostringstream o;
                 o << "PRIVMSG #" << channel << " :Stream is offline" << CRLF;
                 co_await irc_client_.send_line(o.str());
                 co_return;
             }
+            auto stream_start = status_opt->start_time;
 
             // 2) Parse optional limit argument
             int limit = 100;
@@ -332,7 +333,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             if (auto pid = channel_store_.get_faceit_id(channel)) {
                 playerId = *pid;
             } else if (auto nick = channel_store_.get_faceit_nick(channel)) {
-                // first‐time lookup
+                // first-time lookup
                 glz::json_t pj = co_await faceit_client_.get_player_by_nickname(*nick, "cs2");
                 playerId = pj.get_object().at("player_id").get_string();
                 channel_store_.set_faceit_id(channel, playerId);
@@ -345,11 +346,10 @@ TwitchBot::TwitchBot(std::string oauth_token,
             }
 
             // 4) Delegate to record_service
-            bool ok = true;
             RecordSummary sum;
+            bool ok = true;
             try {
-                sum = co_await fetch_record_summary(
-                    playerId, stream_opt->start_time, limit, faceit_client_);
+                sum = co_await fetch_record_summary(playerId, stream_start, limit, faceit_client_);
             } catch (...) {
                 ok = false;
             }
@@ -365,7 +365,6 @@ TwitchBot::TwitchBot(std::string oauth_token,
             o << "PRIVMSG #" << channel << " :" << sum.wins << "W/" << sum.losses << "L ("
               << sum.matchCount << ") | Elo " << sum.currentElo
               << (sum.eloChange >= 0 ? " (+" : " (") << sum.eloChange << ")" << CRLF;
-
             co_await irc_client_.send_line(o.str());
         });
 }
