@@ -79,7 +79,7 @@ auto Config::load() -> Config
     return parse_config(default_path);
 }
 
-EnvError::EnvError(const std::string &msg) noexcept : std::runtime_error{std::move(msg)}
+EnvError::EnvError(const std::string& msg) noexcept : std::runtime_error{std::move(msg)}
 {
 }
 

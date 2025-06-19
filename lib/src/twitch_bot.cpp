@@ -62,7 +62,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                          " You must be a mod to invite the bot to a different channel. "
                          "Use !join from your own channel instead.",
                          118),
-                     boost::asio::buffer(CRLF)}};
+                     boost::asio::buffer(kCRLF)}};
                 co_await irc_client_.send_buffers(warn);
                 co_return;
             }
@@ -74,7 +74,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 std::array<boost::asio::const_buffer, 5> msg_exist{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :Already in channel ", 22), boost::asio::buffer(target),
-                     boost::asio::buffer(CRLF)}};
+                     boost::asio::buffer(kCRLF)}};
                 co_await irc_client_.send_buffers(msg_exist);
                 co_return;
             }
@@ -85,7 +85,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             // JOIN #<target>
             std::array<boost::asio::const_buffer, 3> join_cmd{{boost::asio::buffer("JOIN #", 6),
                                                                boost::asio::buffer(target),
-                                                               boost::asio::buffer(CRLF)}};
+                                                               boost::asio::buffer(kCRLF)}};
             co_await irc_client_.send_buffers(join_cmd);
 
             // acknowledgement
@@ -93,7 +93,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                  boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
                  boost::asio::buffer(" Joined ", 8), boost::asio::buffer(target),
-                 boost::asio::buffer(CRLF)}};
+                 boost::asio::buffer(kCRLF)}};
             co_await irc_client_.send_buffers(ack);
         });
 
@@ -116,7 +116,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                          " You must be a mod to remove the bot from another channel. "
                          "Use !leave from your own channel instead.",
                          119),
-                     boost::asio::buffer(CRLF)}};
+                     boost::asio::buffer(kCRLF)}};
                 co_await irc_client_.send_buffers(warn);
                 co_return;
             }
@@ -127,7 +127,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 std::array<boost::asio::const_buffer, 5> msg_absent{
                     {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                      boost::asio::buffer(" :Not in channel ", 19), boost::asio::buffer(target),
-                     boost::asio::buffer(CRLF)}};
+                     boost::asio::buffer(kCRLF)}};
                 co_await irc_client_.send_buffers(msg_absent);
                 co_return;
             }
@@ -138,14 +138,14 @@ TwitchBot::TwitchBot(std::string oauth_token,
             // PART #<target>
             std::array<boost::asio::const_buffer, 3> part_cmd{{boost::asio::buffer("PART #", 6),
                                                                boost::asio::buffer(target),
-                                                               boost::asio::buffer(CRLF)}};
+                                                               boost::asio::buffer(kCRLF)}};
             co_await irc_client_.send_buffers(part_cmd);
 
             std::array<boost::asio::const_buffer, 7> ack{
                 {boost::asio::buffer("PRIVMSG #", 9), boost::asio::buffer(control_channel_),
                  boost::asio::buffer(" :@", 3), boost::asio::buffer(user),
                  boost::asio::buffer(" Left ", 6), boost::asio::buffer(target),
-                 boost::asio::buffer(CRLF)}};
+                 boost::asio::buffer(kCRLF)}};
             co_await irc_client_.send_buffers(ack);
         });
 
@@ -169,7 +169,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 list = "(none)";
 
             auto reply = std::format(
-                "PRIVMSG #{} :Currently in channels: {}{}", control_channel_, list, CRLF);
+                "PRIVMSG #{} :Currently in channels: {}{}", control_channel_, list, kCRLF);
             co_await irc_client_.send_line(reply);
         });
 
@@ -183,7 +183,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 // inform them they need mod
                 std::ostringstream err;
                 err << "PRIVMSG #" << channel << " :You must be a moderator to use this command"
-                    << CRLF;
+                    << kCRLF;
                 co_await irc_client_.send_line(err.str());
                 co_return;
             }
@@ -192,7 +192,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             channel_store_.save();
 
             std::ostringstream ok;
-            ok << "PRIVMSG #" << channel << " :Alias set to '" << alias << "'" << CRLF;
+            ok << "PRIVMSG #" << channel << " :Alias set to '" << alias << "'" << kCRLF;
             co_await irc_client_.send_line(ok.str());
         });
 
@@ -205,7 +205,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             if (!isPrivileged(msg)) {
                 std::ostringstream err;
                 err << "PRIVMSG #" << channel << " :You must be a moderator to use this command"
-                    << CRLF;
+                    << kCRLF;
                 co_await irc_client_.send_line(err.str());
                 co_return;
             }
@@ -215,7 +215,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
 
             std::ostringstream ok;
             ok << "PRIVMSG #" << channel << " :FACEIT nickname set to '" << faceit_nick << "'"
-               << CRLF;
+               << kCRLF;
             co_await irc_client_.send_line(ok.str());
         });
 
@@ -234,7 +234,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             channel_store_.set_faceit_id(channel, playerId);
         } else {
             std::ostringstream oss;
-            oss << "PRIVMSG #" << channel << " :No FACEIT nickname set" << CRLF;
+            oss << "PRIVMSG #" << channel << " :No FACEIT nickname set" << kCRLF;
             co_await irc_client_.send_line(oss.str());
             co_return;
         }
@@ -249,7 +249,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
         }
         if (!fetch_ok) {
             std::ostringstream oss;
-            oss << "PRIVMSG #" << channel << " :Failed to fetch FACEIT data" << CRLF;
+            oss << "PRIVMSG #" << channel << " :Failed to fetch FACEIT data" << kCRLF;
             co_await irc_client_.send_line(oss.str());
             co_return;
         }
@@ -288,7 +288,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
         // 5) Send reply
         {
             std::ostringstream oss;
-            oss << "PRIVMSG #" << channel << " :" << "Level " << level << " | " << elo << CRLF;
+            oss << "PRIVMSG #" << channel << " :" << "Level " << level << " | " << elo << kCRLF;
             co_await irc_client_.send_line(oss.str());
         }
     };
@@ -308,7 +308,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             auto status_opt = co_await helix_client_.get_stream_status(channel);
             if (!status_opt || !status_opt->is_live) {
                 ostringstream o;
-                o << "PRIVMSG #" << channel << " :Stream is offline" << CRLF;
+                o << "PRIVMSG #" << channel << " :Stream is offline" << kCRLF;
                 co_await irc_client_.send_line(o.str());
                 co_return;
             }
@@ -336,7 +336,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 channel_store_.save();
             } else {
                 ostringstream o;
-                o << "PRIVMSG #" << channel << " :No FACEIT nickname set" << CRLF;
+                o << "PRIVMSG #" << channel << " :No FACEIT nickname set" << kCRLF;
                 co_await irc_client_.send_line(o.str());
                 co_return;
             }
@@ -351,7 +351,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             }
             if (!ok) {
                 ostringstream o;
-                o << "PRIVMSG #" << channel << " :Failed to fetch record" << CRLF;
+                o << "PRIVMSG #" << channel << " :Failed to fetch record" << kCRLF;
                 co_await irc_client_.send_line(o.str());
                 co_return;
             }
@@ -360,7 +360,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
             ostringstream o;
             o << "PRIVMSG #" << channel << " :" << sum.wins << "W/" << sum.losses << "L ("
               << sum.matchCount << ") | Elo " << sum.currentElo
-              << (sum.eloChange >= 0 ? " (+" : " (") << sum.eloChange << ")" << CRLF;
+              << (sum.eloChange >= 0 ? " (+" : " (") << sum.eloChange << ")" << kCRLF;
             co_await irc_client_.send_line(o.str());
         });
 }

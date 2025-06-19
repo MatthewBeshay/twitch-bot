@@ -119,7 +119,7 @@ public:
         std::shared_lock<std::shared_mutex> guard{data_mutex_};
         if (auto it = channel_data_.find(channel);
             it != channel_data_.end() && it->second.faceit_nick) {
-            const auto &s = *it->second.faceit_nick;
+            const auto& s = *it->second.faceit_nick;
             return std::string_view{s.data(), s.size()};
         }
         return std::nullopt;
@@ -140,7 +140,7 @@ public:
         std::shared_lock<std::shared_mutex> guard{data_mutex_};
         if (auto it = channel_data_.find(channel);
             it != channel_data_.end() && it->second.faceit_id) {
-            auto &s = *it->second.faceit_id;
+            auto& s = *it->second.faceit_id;
             return std::string_view{s.data(), s.size()};
         }
         return std::nullopt;
@@ -155,7 +155,6 @@ public:
             save();
         }
     }
-
 
     /// Copy the current channel names into \p out (capacity reused).
     void channel_names(std::vector<std::string_view>& out) const noexcept

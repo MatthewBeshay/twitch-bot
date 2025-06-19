@@ -88,7 +88,7 @@ struct IrcMessage {
     }
 };
 
-/// Parse one raw IRC line (no CRLF) into an IrcMessage.
+/// Parse one raw IRC line (no kCRLF) into an IrcMessage.
 /// All views refer to \p raw; no allocations.
 /// Pre: raw.empty() || raw.data() != nullptr.
 /// Post: result.param_count <= max_params.

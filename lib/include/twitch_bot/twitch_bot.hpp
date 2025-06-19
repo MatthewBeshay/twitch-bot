@@ -52,7 +52,6 @@ public:
 
 private:
     /// Broadcaster, moderator or internal server message.
-    /// Broadcaster, moderator or internal server message.
     TB_FORCE_INLINE
     static bool isPrivileged(const IrcMessage& msg) noexcept
     {
@@ -65,7 +64,7 @@ private:
 
     boost::asio::awaitable<void> run_bot() noexcept;
 
-    static constexpr std::string_view CRLF{"\r\n"}; ///< IRC line terminator
+    static constexpr std::string_view kCRLF{"\r\n"}; ///< IRC line terminator
 
     boost::asio::thread_pool pool_;
     boost::asio::strand<boost::asio::any_io_executor> strand_;

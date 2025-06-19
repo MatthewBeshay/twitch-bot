@@ -44,14 +44,14 @@ public:
     auto connect(std::span<const std::string_view> channels) noexcept
         -> boost::asio::awaitable<void>;
 
-    /// Send an IRC line, CRLF added automatically.
+    /// Send an IRC line, kCRLF added automatically.
     auto send_line(std::string_view message) noexcept -> boost::asio::awaitable<void>;
 
     /// Send pre-built buffers without allocating.
     auto send_buffers(std::span<const boost::asio::const_buffer> buffers) noexcept
         -> boost::asio::awaitable<void>;
 
-    /// Read frames, split on CRLF, call \p handler for each line.
+    /// Read frames, split on kCRLF, call \p handler for each line.
     template <typename Handler>
     auto read_loop(Handler handler) noexcept -> boost::asio::awaitable<void>;
 

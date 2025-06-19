@@ -7,13 +7,13 @@
 
 namespace twitch_bot {
 
-static int tally_wins(std::vector<glz::json_t> const& stats)
+static int tally_wins(const std::vector<glz::json_t>& stats)
 {
     int wins = 0;
-    for (auto const& m : stats) {
+    for (const auto& m : stats) {
         if (!m.is_object())
             continue;
-        auto const& so = m.get_object().at("stats").get_object();
+        const auto& so = m.get_object().at("stats").get_object();
         auto it = so.find("Result");
         if (it != so.end() && it->second.is_string() && it->second.get_string() == "1") {
             ++wins;
@@ -35,18 +35,18 @@ boost::asio::awaitable<RecordSummary> fetch_record_summary(std::string_view play
 
     // 2) ELO history (v1)
     std::vector<glz::json_t> history = co_await faceit.get_elo_history(playerId,
-                                                   /* size= */ limit,
-                                                   /* page= */ 0,
-                                                   /* fromMs= */ since.count(),
-                                                   /* toMs= */ std::nullopt);
-    std::sort(history.begin(), history.end(), [](auto const& a, auto const& b) {
+                                                                       /* size= */ limit,
+                                                                       /* page= */ 0,
+                                                                       /* fromMs= */ since.count(),
+                                                                       /* toMs= */ std::nullopt);
+    std::sort(history.begin(), history.end(), [](const auto& a, const auto& b) {
         return a.get_object().at("date").as<int64_t>() < b.get_object().at("date").as<int64_t>();
     });
 
     int eloChange = 0;
     if (history.size() >= 2) {
-        auto const& first_entry = history.front().get_object();
-        auto const& last_entry = history.back().get_object();
+        const auto& first_entry = history.front().get_object();
+        const auto& last_entry = history.back().get_object();
         int first_elo = std::stoi(first_entry.at("elo").get_string());
         int last_elo = std::stoi(last_entry.at("elo").get_string());
         eloChange = last_elo - first_elo;

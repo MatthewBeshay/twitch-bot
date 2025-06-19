@@ -11,7 +11,7 @@ namespace env {
 class EnvError final : public std::runtime_error
 {
 public:
-    explicit EnvError(const std::string &msg) noexcept;
+    explicit EnvError(const std::string& msg) noexcept;
 };
 
 /// Twitch chat credentials.
@@ -66,7 +66,7 @@ public:
     }
 
     /// Return Faceit Data API settings.
-    const FaceitConfig &faceit() const noexcept
+    const FaceitConfig& faceit() const noexcept
     {
         return faceit_;
     }
