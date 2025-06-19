@@ -288,7 +288,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
         // 5) Send reply
         {
             std::ostringstream oss;
-            oss << "PRIVMSG #" << channel << " :" << "Level" << level << " | " << elo << CRLF;
+            oss << "PRIVMSG #" << channel << " :" << "Level " << level << " | " << elo << CRLF;
             co_await irc_client_.send_line(oss.str());
         }
     };
