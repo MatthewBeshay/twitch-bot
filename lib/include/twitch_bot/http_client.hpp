@@ -241,9 +241,9 @@ boost::asio::awaitable<void> client::stream_get(std::string_view host,
     bool is_chunked = resp.base()["transfer-encoding"] == "chunked";
 
     if (is_chunked) {
-        // Decode chunks zero-copy
         uint64_t chunk_state = 0;
         std::string_view raw_buf;
+
         while (true) {
             // Set read timeout
             conn->stream.next_layer().expires_after(k_http_read_timeout);
@@ -252,16 +252,25 @@ boost::asio::awaitable<void> client::stream_get(std::string_view host,
             std::size_t n = co_await conn->stream.async_read_some(
                 boost::asio::buffer(conn->buffer.prepare(8192)), tok);
             conn->buffer.commit(n);
+
+            // Build a view over the new bytes
             raw_buf
                 = std::string_view{reinterpret_cast<const char *>(conn->buffer.data().data()), n};
 
-            for (auto chunk : ChunkIterator(&raw_buf, &chunk_state)) {
-                bool fin = !isParsingChunkedEncoding(chunk_state);
+            // Decode and dispatch each chunk
+            for (auto chunk : ChunkIterator(raw_buf.data(), // ptr
+                                            raw_buf.size(), // len
+                                            chunk_state // state (by reference)
+                                            )) {
+                bool fin = !is_parsing_chunked_encoding(chunk_state);
                 handler(chunk, fin);
             }
-            if (!isParsingChunkedEncoding(chunk_state)) {
+
+            // If we're done with chunked body, break out
+            if (!is_parsing_chunked_encoding(chunk_state)) {
                 break;
             }
+
             conn->buffer.clear();
         }
     } else {
