@@ -42,20 +42,20 @@ public:
     void dispatch(IrcMessage msg) noexcept;
 
 private:
-    /// Strip a leading ‘#’.
+    /// Strip a leading '#'.
     static TB_FORCE_INLINE std::string_view normalize_channel(std::string_view raw) noexcept
     {
         return (!raw.empty() && raw.front() == '#') ? raw.substr(1) : raw;
     }
 
-    /// Part before ‘!’ in \p prefix.
+    /// Part before '!' in \p prefix.
     static TB_FORCE_INLINE std::string_view extract_user(std::string_view prefix) noexcept
     {
         auto pos = prefix.find('!');
         return (pos != std::string_view::npos) ? prefix.substr(0, pos) : prefix;
     }
 
-    /// Split “!cmd args” into \p out_cmd and \p out_args.
+    /// Split "!cmd args" into \p out_cmd and \p out_args.
     static TB_FORCE_INLINE void split_command(std::string_view text,
                                               std::string_view& out_cmd,
                                               std::string_view& out_args) noexcept

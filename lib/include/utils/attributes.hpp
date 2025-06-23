@@ -1,8 +1,8 @@
 #pragma once
 
 // Cross-platform attributes:
-//   TB_FORCE_INLINE – request aggressive inlining
-//   TB_RESTRICT     – indicate a pointer does not alias others
+//   TB_FORCE_INLINE - request aggressive inlining
+//   TB_RESTRICT     - indicate a pointer does not alias others
 //
 // MSVC:   __forceinline / __restrict
 // GCC/Clang: inline __attribute__((always_inline)) / __restrict__

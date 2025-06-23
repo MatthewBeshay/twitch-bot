@@ -49,7 +49,7 @@ void CommandDispatcher::dispatch(IrcMessage msg) noexcept
     std::string_view user = extract_user(msg.prefix);
     std::string_view text = msg.trailing;
 
-    // ‘!cmd …’
+    // '!cmd ...'
     if (!text.empty() && text.front() == '!') {
         std::string_view cmd_name;
         std::string_view args;
