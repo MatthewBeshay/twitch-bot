@@ -51,7 +51,7 @@ public:
 private:
     /// Broadcaster, moderator or internal server message.
     TB_FORCE_INLINE
-    static bool isPrivileged(const IrcMessage &msg) noexcept
+    static bool isPrivileged(const IrcMessage& msg) noexcept
     {
         if (msg.is_broadcaster)
             return true;

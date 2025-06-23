@@ -115,7 +115,7 @@ auto IrcClient::send_buffers(std::span<const boost::asio::const_buffer> buffers)
         ws_stream_.text(true);
         co_await ws_stream_.async_write(buffers, use_awaitable);
     } catch (...) {
-        // silent drop – connection close will surface elsewhere
+        // silent drop - connection close will surface elsewhere
     }
 }
 

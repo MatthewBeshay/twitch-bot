@@ -18,7 +18,7 @@
 
 namespace twitch_bot {
 
-/// Parsed IRC message – views into the original buffer, no ownership or allocations.
+/// Parsed IRC message - views into the original buffer, no ownership or allocations.
 struct IrcMessage {
     static constexpr std::size_t max_params = 16; ///< hard limit on middle parameters
 
