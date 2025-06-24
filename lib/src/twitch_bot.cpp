@@ -299,15 +299,12 @@ TwitchBot::TwitchBot(std::string oauth_token,
     // ---------- !record -------------------------------------------------------
     dispatcher_.register_command(
         "record", [this](IrcMessage msg) noexcept -> boost::asio::awaitable<void> {
-            using namespace std;
-            using namespace std::chrono;
-
             auto channel = msg.params[0];
 
             // 1) Check stream state
             auto status_opt = co_await helix_client_.get_stream_status(channel);
             if (!status_opt || !status_opt->is_live) {
-                ostringstream o;
+                std::ostringstream o;
                 o << "PRIVMSG #" << channel << " :Stream is offline" << kCRLF;
                 co_await irc_client_.send_line(o.str());
                 co_return;
@@ -318,14 +315,14 @@ TwitchBot::TwitchBot(std::string oauth_token,
             int limit = 100;
             if (!msg.trailing.empty()) {
                 try {
-                    limit = clamp(stoi(string{msg.trailing}), 1, 100);
+                    limit = std::clamp(std::stoi(std::string{msg.trailing}), 1, 100);
                 } catch (...) {
                     // leave default
                 }
             }
 
             // 3) Resolve (or cache) the immutable FACEIT player ID
-            string playerId;
+            std::string playerId;
             if (auto pid = channel_store_.get_faceit_id(channel)) {
                 playerId = *pid;
             } else if (auto nick = channel_store_.get_faceit_nick(channel)) {
@@ -335,7 +332,7 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 channel_store_.set_faceit_id(channel, playerId);
                 channel_store_.save();
             } else {
-                ostringstream o;
+                std::ostringstream o;
                 o << "PRIVMSG #" << channel << " :No FACEIT nickname set" << kCRLF;
                 co_await irc_client_.send_line(o.str());
                 co_return;
@@ -350,14 +347,14 @@ TwitchBot::TwitchBot(std::string oauth_token,
                 ok = false;
             }
             if (!ok) {
-                ostringstream o;
+                std::ostringstream o;
                 o << "PRIVMSG #" << channel << " :Failed to fetch record" << kCRLF;
                 co_await irc_client_.send_line(o.str());
                 co_return;
             }
 
             // 5) Format + send
-            ostringstream o;
+            std::ostringstream o;
             o << "PRIVMSG #" << channel << " :" << sum.wins << "W/" << sum.losses << "L ("
               << sum.matchCount << ") | Elo " << sum.currentElo
               << (sum.eloChange >= 0 ? " (+" : " (") << sum.eloChange << ")" << kCRLF;
