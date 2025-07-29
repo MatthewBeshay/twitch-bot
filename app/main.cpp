@@ -8,11 +8,10 @@
 int main()
 {
     try {
-        // Load the immutable application configuration
         auto cfg = env::Config::load();
 
-        // Unpack only the values TwitchBot actually needs
         twitch_bot::TwitchBot bot{/* oauthToken     = */ cfg.chat().oauth_token,
+                                  /* refreshToken   = */ cfg.chat().refresh_token,
                                   /* clientId       = */ cfg.app().client_id,
                                   /* clientSecret   = */ cfg.app().client_secret,
                                   /* controlChannel = */ cfg.bot().channel,
@@ -28,7 +27,6 @@ int main()
     }
 
 #ifndef NDEBUG
-    // In debug builds, wait for the user to hit Enter before closing
     std::cerr << "\nPress Enter to exit...";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 #endif

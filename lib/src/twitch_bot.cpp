@@ -21,6 +21,7 @@
 namespace twitch_bot {
 
 TwitchBot::TwitchBot(std::string oauth_token,
+                     std::string refresh_token,
                      std::string client_id,
                      std::string client_secret,
                      std::string control_channel,
@@ -30,13 +31,14 @@ TwitchBot::TwitchBot(std::string oauth_token,
     , strand_{pool_.get_executor()} // serialises all work
     , ssl_ctx_{boost::asio::ssl::context::tlsv12_client}
     , oauth_token_{std::move(oauth_token)}
+    , refresh_token_(std::move(refresh_token))
     , client_id_{std::move(client_id)}
     , client_secret_{std::move(client_secret)}
     , control_channel_{std::move(control_channel)}
     , faceit_api_key_{std::move(faceit_api_key)}
     , irc_client_{strand_, ssl_ctx_, oauth_token_, control_channel_}
     , dispatcher_{strand_}
-    , helix_client_{strand_, ssl_ctx_, client_id_, client_secret_}
+    , helix_client_{strand_, ssl_ctx_, client_id_, client_secret_, refresh_token_}
     , channel_store_{strand_}
     , faceit_client_{strand_, ssl_ctx_, faceit_api_key_}
 {
@@ -380,16 +382,25 @@ void TwitchBot::run()
 
 boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
 {
-    // Ensure bot is in its own control channel
     std::vector<std::string_view> channels;
     channel_store_.channel_names(channels);
-    if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end())
+    if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end()) {
         channels.push_back(control_channel_);
+    }
+
+    co_await helix_client_.ensure_valid_token();
+
+    std::string chat_tok = helix_client_.current_token();
+    if (chat_tok.rfind("oauth:", 0) != 0) {
+        chat_tok = "oauth:" + chat_tok;
+    }
+
+    irc_client_.set_oauth_token(chat_tok);
 
     try {
         co_await irc_client_.connect(channels);
     } catch (const std::exception &e) {
-        std::cerr << "[TwitchBot] connect error: " << e.what() << '\n';
+        std::cerr << "[TwitchBot] IRC connect error: " << e.what() << '\n';
         co_return;
     }
 

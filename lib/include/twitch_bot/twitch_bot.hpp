@@ -33,6 +33,7 @@ public:
     /// Create a bot; \p threads controls the size of the worker pool.
     /// Pre: \p oauth_token, \p client_id, \p client_secret and \p control_channel are non-empty.
     explicit TwitchBot(std::string oauth_token,
+                       std::string refresh_token,
                        std::string client_id,
                        std::string client_secret,
                        std::string control_channel,
@@ -71,6 +72,7 @@ private:
     boost::asio::ssl::context ssl_ctx_;
 
     const std::string oauth_token_;
+    const std::string refresh_token_;
     const std::string client_id_;
     const std::string client_secret_;
     const std::string control_channel_;

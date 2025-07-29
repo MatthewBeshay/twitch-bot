@@ -61,9 +61,15 @@ public:
     /// Cancel timers and close the connection.
     void close() noexcept;
 
+    void set_oauth_token(std::string_view tok) noexcept
+    {
+        oauth_token_ = tok;
+    }
+
 private:
     static constexpr std::size_t k_read_buffer_size = 8ULL * 1024ULL; ///< bytes
-    static constexpr std::string_view k_crlf = "\r\n";
+
+    static constexpr std::string_view kCRLF{"\r\n"}; ///< IRC line terminator
 
     using tcp_socket_type = boost::asio::ip::tcp::socket;
     using ssl_stream_type = boost::asio::ssl::stream<tcp_socket_type>;

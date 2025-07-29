@@ -65,20 +65,22 @@ auto IrcClient::connect(std::span<const std::string_view> channels) noexcept
     // PASS <oauth_token>
     {
         static constexpr std::string_view pass_cmd{"PASS "};
-        std::array<const_buffer, 2> bufs{buffer(pass_cmd.data(), pass_cmd.size()),
-                                         buffer(oauth_token_)};
-        co_await send_buffers(bufs);
+        std::array<const_buffer, 3> bufs_pass{buffer("PASS ", 5), buffer(oauth_token_),
+                                              boost::asio::buffer(kCRLF)};
+        co_await send_buffers(bufs_pass);
     }
 
     // NICK <nickname>
     {
-        static constexpr std::string_view nick_cmd{"NICK "};
-        std::array<const_buffer, 2> bufs{buffer(nick_cmd.data(), nick_cmd.size()),
-                                         buffer(nickname_)};
-        co_await send_buffers(bufs);
+        std::array<const_buffer, 3> bufs_nick{buffer("NICK ", 5), buffer(nickname_),
+                                              boost::asio::buffer(kCRLF)};
+        co_await send_buffers(bufs_nick);
     }
 
-    // CAP REQ ...
+    // Negotiate IRCv3 capabilities:
+    // ‑ membership (JOIN/PART events for all users)
+    // ‑ tags       (message metadata like badges, emotes, colours)
+    // ‑ commands   (Twitch‑specific notices and user events)
     {
         static constexpr char caps[]
             = "CAP REQ :twitch.tv/membership twitch.tv/tags twitch.tv/commands\r\n";
@@ -91,10 +93,9 @@ auto IrcClient::connect(std::span<const std::string_view> channels) noexcept
         static constexpr std::string_view join_cmd{"JOIN"};
         static constexpr std::string_view space{" "};
         static constexpr std::string_view hash{"#"};
-        std::array<const_buffer, 5> bufs{buffer(join_cmd.data(), join_cmd.size()),
-                                         buffer(space.data(), space.size()),
-                                         buffer(hash.data(), hash.size()), buffer(channel),
-                                         buffer(k_crlf.data(), k_crlf.size())};
+        std::array<const_buffer, 5> bufs{
+            buffer(join_cmd.data(), join_cmd.size()), buffer(space.data(), space.size()),
+            buffer(hash.data(), hash.size()), buffer(channel), boost::asio::buffer(kCRLF)};
         co_await send_buffers(bufs);
     }
 }
@@ -103,7 +104,7 @@ auto IrcClient::connect(std::span<const std::string_view> channels) noexcept
 auto IrcClient::send_line(std::string_view message) noexcept -> boost::asio::awaitable<void>
 {
     std::array<const_buffer, 2> bufs{buffer(message.data(), message.size()),
-                                     buffer(k_crlf.data(), k_crlf.size())};
+                                     boost::asio::buffer(kCRLF)};
     co_await send_buffers(bufs);
 }
 

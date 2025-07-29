@@ -1,6 +1,7 @@
 // C++ Standard Library
 #include <array>
 #include <chrono>
+#include <string>
 #include <string_view>
 
 // 3rd-party
@@ -73,46 +74,58 @@ namespace { // internal helpers and endpoints
 HelixClient::HelixClient(boost::asio::any_io_executor executor,
                          boost::asio::ssl::context& ssl_ctx,
                          std::string_view client_id,
-                         std::string_view client_secret) noexcept
+                         std::string_view client_secret,
+                         std::string_view refresh_token) noexcept
     : strand_{executor}
     , token_expiry_{std::chrono::steady_clock::now()}
     , executor_{executor}
     , http_client_{executor, ssl_ctx}
     , client_id_{client_id}
     , client_secret_{client_secret}
+    , refresh_token_(refresh_token)
 {
-    token_body_ = "client_id=" + std::string{client_id}
-        + "&client_secret=" + std::string{client_secret} + "&grant_type=client_credentials";
 }
 
 auto HelixClient::ensure_valid_token() noexcept -> boost::asio::awaitable<void>
 {
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
-    bool fresh = !token_.empty() && std::chrono::steady_clock::now() < token_expiry_;
-    if (fresh && co_await validate_token()) {
+    bool is_fresh = !token_.empty() && std::chrono::steady_clock::now() < token_expiry_;
+
+    if (is_fresh && co_await validate_token()) {
         co_return;
     }
 
-    co_await request_new_token();
+    if (!refresh_token_.empty()) {
+        co_await refresh_token();
+    } else {
+        co_await request_new_token();
+    }
 }
 
 auto HelixClient::validate_token() noexcept -> boost::asio::awaitable<bool>
 {
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
-    std::string auth{"Bearer " + token_};
+    if (token_.empty()) {
+        co_return false;
+    }
+
+    std::string auth = "Bearer " + token_;
     std::array<http_client::http_header, 1> hdrs{{{"Authorization", auth}}};
     http_client::http_headers headers{hdrs.data(), int(hdrs.size())};
 
     try {
         auto result = co_await http_client_.get(
             oauth_validate.host, oauth_validate.port, oauth_validate.target, headers);
+
         if (!result) {
             co_return false;
         }
-        int secs = (*result)["expires_in"].as<int>();
-        token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds{secs};
+
+        int expires_in_s = (*result)["expires_in"].as<int>();
+        token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds{expires_in_s};
+
         co_return true;
     } catch (...) {
         co_return false;
@@ -120,6 +133,30 @@ auto HelixClient::validate_token() noexcept -> boost::asio::awaitable<bool>
 }
 
 auto HelixClient::request_new_token() noexcept -> boost::asio::awaitable<void>
+{
+    co_return co_await fetch_token(build_client_credentials_request_body());
+}
+
+auto HelixClient::refresh_token() noexcept -> boost::asio::awaitable<void>
+{
+    co_return co_await fetch_token(build_refresh_token_request_body());
+}
+
+auto HelixClient::build_client_credentials_request_body() const noexcept -> std::string
+{
+    return "client_id=" + client_id_ + "&client_secret=" + client_secret_
+        + "&grant_type=client_credentials";
+}
+
+auto HelixClient::build_refresh_token_request_body() const noexcept -> std::string
+{
+    return "client_id=" + client_id_ + "&client_secret=" + client_secret_
+        + "&grant_type=refresh_token"
+          "&refresh_token="
+        + refresh_token_;
+}
+
+auto HelixClient::fetch_token(std::string body) noexcept -> boost::asio::awaitable<void>
 {
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
@@ -129,14 +166,19 @@ auto HelixClient::request_new_token() noexcept -> boost::asio::awaitable<void>
 
     try {
         auto result = co_await http_client_.post(
-            oauth_token.host, oauth_token.port, oauth_token.target, token_body_, headers);
+            oauth_token.host, oauth_token.port, oauth_token.target, body, headers);
         if (!result) {
             token_.clear();
             co_return;
         }
+
         token_ = (*result)["access_token"].get<std::string>();
-        int ex = (*result)["expires_in"].as<int>();
-        token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds{ex};
+        if ((*result)["refresh_token"].holds<std::string>()) {
+            refresh_token_ = (*result)["refresh_token"].get<std::string>();
+        }
+
+        int expires = (*result)["expires_in"].as<int>();
+        token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds{expires};
     } catch (...) {
         token_.clear();
     }
@@ -154,22 +196,23 @@ auto HelixClient::get_stream_status(std::string_view channel_id) noexcept
         co_return std::nullopt;
     }
 
-    std::string path;
-    path.reserve(helix_streams.target.size() + channel_id.size());
-    path = helix_streams.target;
-    path += channel_id;
+    auto do_request = [&]() -> boost::asio::awaitable<std::optional<StreamStatus>> {
+        std::string path;
+        path.reserve(helix_streams.target.size() + channel_id.size());
+        path = helix_streams.target;
+        path += channel_id;
 
-    std::string auth{"Bearer " + token_};
-    std::array<http_client::http_header, 2> hdrs{
-        {{"Client-ID", client_id_}, {"Authorization", auth}}};
-    http_client::http_headers headers{hdrs.data(), int(hdrs.size())};
+        std::string auth = "Bearer " + token_;
+        std::array<http_client::http_header, 2> hdrs{
+            {{"Client-ID", client_id_}, {"Authorization", auth}}};
+        http_client::http_headers headers{hdrs.data(), int(hdrs.size())};
 
-    try {
         auto result
             = co_await http_client_.get(helix_streams.host, helix_streams.port, path, headers);
         if (!result) {
             co_return std::nullopt;
         }
+
         auto& j = *result;
         if (!j["data"].holds<json::array_t>()) {
             co_return std::nullopt;
@@ -178,13 +221,40 @@ auto HelixClient::get_stream_status(std::string_view channel_id) noexcept
         if (data.empty()) {
             co_return std::nullopt;
         }
-        if (auto ms = parse_iso8601_ms(data.front()["started_at"].get<std::string>())) {
+
+        auto started = data.front()["started_at"].get<std::string>();
+        if (auto ms = parse_iso8601_ms(started)) {
             co_return StreamStatus{true, *ms};
         }
         co_return std::nullopt;
+    };
+
+    std::optional<StreamStatus> status;
+    std::string error_msg;
+    try {
+        status = co_await do_request();
+    } catch (std::runtime_error& e) {
+        error_msg = e.what();
     } catch (...) {
         co_return std::nullopt;
     }
+
+    if (status) {
+        co_return status;
+    }
+
+    if (!error_msg.empty() && error_msg.find("401") != std::string::npos) {
+        token_.clear();
+        co_await ensure_valid_token();
+
+        try {
+            status = co_await do_request();
+        } catch (...) {
+            status = std::nullopt;
+        }
+    }
+
+    co_return status;
 }
 
 } // namespace twitch_bot
