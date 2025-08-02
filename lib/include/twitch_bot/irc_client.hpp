@@ -94,10 +94,10 @@ auto IrcClient::read_loop(Handler handler) noexcept -> boost::asio::awaitable<vo
 
         std::size_t pos = 0;
         while (pos < chunk.size()) {
-            auto next = chunk.find(k_crlf, pos);
+            auto next = chunk.find(kCRLF, pos);
             std::string_view line{chunk.data() + pos,
                                   next == std::string_view::npos ? chunk.size() - pos : next - pos};
-            pos = next == std::string_view::npos ? chunk.size() : next + k_crlf.size();
+            pos = next == std::string_view::npos ? chunk.size() : next + kCRLF.size();
 
             if (!line.empty())
                 handler(line);
