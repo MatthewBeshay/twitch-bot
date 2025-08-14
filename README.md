@@ -10,7 +10,7 @@
 
 1. **Clone the repository (with submodules):**
 ```
-   git clone --recurse-submodules https://github.com/92half99/twitch-bot.git
+   git clone --recurse-submodules https://github.com/MatthewBeshay/twitch-bot.git
 ``` 
 2. **Configure with CMake:**
 ```
