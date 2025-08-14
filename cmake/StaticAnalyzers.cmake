@@ -1,10 +1,7 @@
 # StaticAnalyzers.cmake
-# Target-scoped setup for clang-tidy, cppcheck and include-what-you-use.
-# Nothing is set globally unless you call the global opt-in helpers.
 
 include_guard(GLOBAL)
 
-# Global toggles are optional. Prefer enabling per target or via Presets.
 option(ENABLE_CLANG_TIDY "Enable clang-tidy for selected targets" OFF)
 option(ENABLE_CPPCHECK "Enable cppcheck for selected targets" OFF)
 option(ENABLE_IWYU "Enable include-what-you-use for selected targets" OFF)
@@ -37,7 +34,6 @@ function(project_enable_clang_tidy target)
       -extra-arg=-Wno-ignored-optimization-argument
       -extra-arg=-Wno-unused-command-line-argument)
 
-  # Tell clang-tidy which standard to parse as, matching the project
   if(CMAKE_CXX_STANDARD)
     if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
       list(APPEND _opts -extra-arg=/std:c++${CMAKE_CXX_STANDARD})
@@ -46,7 +42,6 @@ function(project_enable_clang_tidy target)
     endif()
   endif()
 
-  # Make warnings count as errors if your normal switch is ON
   if(WARNINGS_AS_ERRORS)
     list(APPEND _opts -warnings-as-errors=*)
   endif()
@@ -62,7 +57,6 @@ function(project_enable_cppcheck target)
     return()
   endif()
 
-  # Skip INTERFACE libs
   get_target_property(_type "${target}" TYPE)
   if(_type STREQUAL "INTERFACE_LIBRARY")
     return()
@@ -80,7 +74,6 @@ function(project_enable_cppcheck target)
     set(_tpl gcc)
   endif()
 
-  # Default set of useful warnings and a few suppressions for noise
   set(_opts
       "${CPPCHECK_EXECUTABLE}"
       --template=${_tpl}
@@ -114,7 +107,6 @@ function(project_enable_include_what_you_use target)
     return()
   endif()
 
-  # Skip INTERFACE libs
   get_target_property(_type "${target}" TYPE)
   if(_type STREQUAL "INTERFACE_LIBRARY")
     return()
@@ -126,12 +118,10 @@ function(project_enable_include_what_you_use target)
     return()
   endif()
 
-  # CMake sets this as a list of commands. Use plain path.
   set_property(TARGET "${target}" PROPERTY CXX_INCLUDE_WHAT_YOU_USE "${IWYU_EXECUTABLE}")
 endfunction()
 
 # ---------- optional global one-liners ----------
-# Use only if you explicitly want whole-build defaults. Presets are cleaner.
 
 function(project_enable_global_clang_tidy)
   if(ENABLE_CLANG_TIDY)

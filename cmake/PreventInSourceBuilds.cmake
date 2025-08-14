@@ -1,5 +1,4 @@
 # PreventInSourceBuilds.cmake
-# Stop accidental in-source builds early.
 
 include_guard(GLOBAL)
 

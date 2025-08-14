@@ -1,6 +1,4 @@
 # cmake/Sanitisers.cmake
-# Target-scoped sanitiser flags for Debug builds only.
-# Skips INTERFACE libraries so flags do not leak to consumers.
 
 include_guard(GLOBAL)
 
@@ -50,7 +48,6 @@ function(project_enable_sanitisers target)
     return()
   endif()
 
-  # Do not attach sanitisers to INTERFACE libraries
   get_target_property(_type "${target}" TYPE)
   if(_type STREQUAL "INTERFACE_LIBRARY")
     message(TRACE "project_enable_sanitisers: skipping INTERFACE target '${target}'")
@@ -110,7 +107,6 @@ function(project_enable_sanitisers target)
         $<$<CONFIG:Debug>:-fsanitize=${_san_csv}>
         $<$<CONFIG:Debug>:-fno-omit-frame-pointer>)
       target_link_options(${target} ${_scope} $<$<CONFIG:Debug>:-fsanitize=${_san_csv}>)
-      # Note: pairing LTO with sanitisers is unreliable, do not force IPO in Debug
     endif()
   endif()
 endfunction()

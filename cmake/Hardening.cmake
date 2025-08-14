@@ -1,6 +1,4 @@
 # cmake/Hardening.cmake
-# Lightweight hardening flags, target-scoped by default.
-# Provides an option to enable UBSan minimal runtime if available.
 
 include_guard(GLOBAL)
 include(CheckCXXCompilerFlag)
@@ -24,7 +22,6 @@ function(project_enable_hardening target)
     ""
     ${ARGN})
 
-  # Do not attach to INTERFACE libraries
   get_target_property(_type "${target}" TYPE)
   if(_type STREQUAL "INTERFACE_LIBRARY")
     message(TRACE "project_enable_hardening: skipping INTERFACE target '${target}'")
@@ -49,22 +46,18 @@ function(project_enable_hardening target)
       /guard:cf
       /DYNAMICBASE)
   else()
-    # GLIBC++ assertions for common containers at runtime
     list(APPEND _cxx_defs -D_GLIBCXX_ASSERTIONS)
 
-    # Strong stack protector if supported
     check_cxx_compiler_flag(-fstack-protector-strong HAS_STACK_PROTECTOR)
     if(HAS_STACK_PROTECTOR)
       list(APPEND _cxx_opts -fstack-protector-strong)
     endif()
 
-    # Control-flow protection
     check_cxx_compiler_flag(-fcf-protection HAS_CF_PROTECTION)
     if(HAS_CF_PROTECTION)
       list(APPEND _cxx_opts -fcf-protection)
     endif()
 
-    # Stack clash protection - GCC and recent Clang on Linux
     check_cxx_compiler_flag(-fstack-clash-protection HAS_STACK_CLASH)
     if(HAS_STACK_CLASH)
       if(UNIX)
@@ -72,13 +65,8 @@ function(project_enable_hardening target)
       endif()
     endif()
 
-    # Fortify level 3 for non-Debug
     list(APPEND _cxx_opts $<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>)
     list(APPEND _cxx_opts $<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>)
-
-    # Optional: PIE could be added here when toolchain supports it
-    # list(APPEND _cxx_opts -fpie)
-    # list(APPEND _ld_opts -pie)
   endif()
 
   if(HARDEN_UBSAN_MINIMAL_RUNTIME
@@ -86,7 +74,6 @@ function(project_enable_hardening target)
          CMAKE_CXX_COMPILER_FRONTEND_VARIANT
          STREQUAL
          "MSVC")
-    # Try minimal UBSan runtime without recover in target scope
     check_cxx_compiler_flag("-fsanitize=undefined -fsanitize-minimal-runtime" HAS_UBSAN_MIN)
     if(HAS_UBSAN_MIN)
       list(
