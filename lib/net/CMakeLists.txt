@@ -50,8 +50,6 @@ endif()
 
 add_library(tb::net ALIAS tb_net)
 
-# ---------------------------- Install and export ------------------------------
-
 install(
   TARGETS tb_net
   EXPORT tb_netTargets
@@ -69,22 +67,13 @@ install(
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_net
 )
 
-# ---------------------------- Package config files ----------------------------
-
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tb_netConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfig.cmake
   INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_net
 )
 
-write_basic_package_version_file(
-  ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfigVersion.cmake
-  VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion
-)
-
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfig.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_net
 )

@@ -54,8 +54,6 @@ target_link_libraries(
 
 add_library(tb::twitch_core ALIAS tb_twitch_core)
 
-# ---------------------------- Install and export ------------------------------
-
 install(
   TARGETS tb_twitch_core
   EXPORT tb_twitch_coreTargets
@@ -73,22 +71,13 @@ install(
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_twitch_core
 )
 
-# ---------------------------- Package config files ----------------------------
-
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tb_twitch_coreConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfig.cmake
   INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_twitch_core
 )
 
-write_basic_package_version_file(
-  ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfigVersion.cmake
-  VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion
-)
-
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfig.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_twitch_core
 )
