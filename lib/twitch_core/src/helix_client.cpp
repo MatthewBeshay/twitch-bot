@@ -16,7 +16,7 @@
 #include <gsl/gsl>
 
 // Project
-#include <tb/net/http_client.hpp>
+#include <tb/net/http/http_client.hpp>
 #include <tb/twitch/helix_client.hpp>
 
 namespace twitch_bot {
@@ -108,6 +108,9 @@ HelixClient::HelixClient(boost::asio::any_io_executor executor,
     , client_secret_{client_secret}
     , refresh_token_value_(refresh_token)
 {
+    http_client_->set_redirect_policy(
+        tb::net::RedirectPolicy{/*max_hops*/0, tb::net::RedirectMode::follow_none});
+    http_client_->enable_cookies(false);
 }
 
 HelixClient::~HelixClient() = default;
@@ -195,8 +198,7 @@ auto HelixClient::fetch_token(std::string body) -> boost::asio::awaitable<void>
         if (persist_access_token_) {
             try {
                 persist_access_token_(token_);
-            } catch (...) { /* ignore */
-            }
+            } catch (...) { /* ignore */ }
         }
     } catch (...) {
         token_.clear();

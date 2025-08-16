@@ -21,21 +21,18 @@ if(NOT DEFINED SANITISE_MEMORY)
   option(SANITISE_MEMORY "Enable MemorySanitiser (Clang only, specialised use)" OFF)
 endif()
 
+if(NOT DEFINED _PROJECT_MSVC_ASAN_NOTE_EMITTED)
+  set(_PROJECT_MSVC_ASAN_NOTE_EMITTED FALSE CACHE INTERNAL "MSVC ASan note emitted" FORCE)
+endif()
+
 function(_sanitiser_validate)
   if(SANITISE_THREAD AND (SANITISE_ADDRESS OR SANITISE_LEAK))
     message(FATAL_ERROR "ThreadSanitiser cannot be combined with AddressSanitiser or LeakSanitiser")
   endif()
-  if(SANITISE_MEMORY
-     AND (SANITISE_ADDRESS
-          OR SANITISE_LEAK
-          OR SANITISE_THREAD))
+  if(SANITISE_MEMORY AND (SANITISE_ADDRESS OR SANITISE_LEAK OR SANITISE_THREAD))
     message(FATAL_ERROR "MemorySanitiser cannot be combined with Address, Leak or Thread sanitisers")
   endif()
-  if(SANITISE_MEMORY
-     AND NOT
-         CMAKE_CXX_COMPILER_ID
-         MATCHES
-         ".*Clang")
+  if(SANITISE_MEMORY AND NOT CMAKE_CXX_COMPILER_ID MATCHES ".*Clang")
     message(WARNING "MemorySanitiser requested but compiler is not Clang - ignoring")
   endif()
 endfunction()
@@ -50,7 +47,6 @@ function(project_enable_sanitisers target)
 
   get_target_property(_type "${target}" TYPE)
   if(_type STREQUAL "INTERFACE_LIBRARY")
-    message(TRACE "project_enable_sanitisers: skipping INTERFACE target '${target}'")
     return()
   endif()
 
@@ -58,24 +54,38 @@ function(project_enable_sanitisers target)
 
   set(_scope PRIVATE)
 
+  set(_cfg_genex $<$<CONFIG:Debug>:1>)
+
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-    # MSVC supports only ASan. Keep Debug only.
     if(SANITISE_ADDRESS)
-      target_compile_options(
-        ${target}
-        ${_scope}
-        $<$<CONFIG:Debug>:/fsanitize=address>
-        $<$<CONFIG:Debug>:/Zi>)
-      target_link_options(${target} ${_scope} $<$<CONFIG:Debug>:/INCREMENTAL:NO>)
-      target_compile_definitions(${target} ${_scope} $<$<CONFIG:Debug>:_DISABLE_VECTOR_ANNOTATION>
-                                           $<$<CONFIG:Debug>:_DISABLE_STRING_ANNOTATION>)
+      target_compile_options(${target} ${_scope}
+        $<$<BOOL:${_cfg_genex}>:/fsanitize=address>
+        $<$<BOOL:${_cfg_genex}>:/Zi>
+        $<$<BOOL:${_cfg_genex}>:/d2Zi+>
+      )
+      
+      target_link_options(${target} ${_scope}
+        $<$<BOOL:${_cfg_genex}>:/INCREMENTAL:NO>
+        $<$<BOOL:${_cfg_genex}>:/fsanitize=address>
+      )
+
+      target_compile_definitions(${target} ${_scope}
+        $<$<BOOL:${_cfg_genex}>:_DISABLE_VECTOR_ANNOTATION>
+        $<$<BOOL:${_cfg_genex}>:_DISABLE_STRING_ANNOTATION>
+      )
+      if(NOT _PROJECT_MSVC_ASAN_NOTE_EMITTED)
+        message(STATUS "Enabling AddressSanitiser for Debug on MSVC toolchain")
+        set(_PROJECT_MSVC_ASAN_NOTE_EMITTED TRUE CACHE INTERNAL "MSVC ASan note emitted" FORCE)
+      endif()
     endif()
-    if(SANITISE_LEAK
-       OR SANITISE_UNDEFINED
-       OR SANITISE_THREAD
-       OR SANITISE_MEMORY)
-      message(WARNING "MSVC only supports AddressSanitiser")
+
+    if(SANITISE_LEAK OR SANITISE_UNDEFINED OR SANITISE_THREAD OR SANITISE_MEMORY)
+      if(NOT _PROJECT_MSVC_ASAN_NOTE_EMITTED)
+        message(STATUS "MSVC toolchain supports AddressSanitiser only on Windows; other sanitisers are ignored")
+        set(_PROJECT_MSVC_ASAN_NOTE_EMITTED TRUE CACHE INTERNAL "MSVC ASan note emitted" FORCE)
+      endif()
     endif()
+
   else()
     # GCC or Clang with GNU-style flags
     set(_san_list "")
@@ -96,17 +106,14 @@ function(project_enable_sanitisers target)
     endif()
 
     if(_san_list)
-      string(
-        REPLACE ";"
-                ","
-                _san_csv
-                "${_san_list}")
-      target_compile_options(
-        ${target}
-        ${_scope}
-        $<$<CONFIG:Debug>:-fsanitize=${_san_csv}>
-        $<$<CONFIG:Debug>:-fno-omit-frame-pointer>)
-      target_link_options(${target} ${_scope} $<$<CONFIG:Debug>:-fsanitize=${_san_csv}>)
+      string(REPLACE ";" "," _san_csv "${_san_list}")
+      target_compile_options(${target} ${_scope}
+        $<$<BOOL:${_cfg_genex}>:-fsanitize=${_san_csv}>
+        $<$<BOOL:${_cfg_genex}>:-fno-omit-frame-pointer>
+      )
+      target_link_options(${target} ${_scope}
+        $<$<BOOL:${_cfg_genex}>:-fsanitize=${_san_csv}>
+      )
     endif()
   endif()
 endfunction()

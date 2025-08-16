@@ -18,7 +18,7 @@
 #include <glaze/json.hpp>
 
 // Project
-#include <tb/net/http_client.hpp>
+#include <tb/net/http/http_client.hpp>
 #include <tb/utils/attributes.hpp>
 
 namespace twitch_bot {

@@ -5,6 +5,8 @@
     { "name": "boost-asio",  "features": [ "ssl" ] },
     "boost-beast",
     "openssl",
+    "zlib",
+    "brotli",
     "tomlplusplus",
     "glaze",
     "ms-gsl"
