@@ -1,16 +1,19 @@
-#include <tb/net/http/encoding.hpp>
-#include <tb/net/http/error.hpp>
-
-#include <brotli/decode.h>
-
+// C++ Standard Library
 #include <string>
 #include <string_view>
 #include <system_error>
 
+// Brotli
+#include <brotli/decode.h>
+
+// Project
+#include <tb/net/http/encoding.hpp>
+#include <tb/net/http/error.hpp>
+
 namespace tb::net::encoding {
 
-bool br_decode(std::string_view in, std::string& out, std::error_code& ec) {
-    // Streamed Brotli decode (handles unknown output size).
+bool br_decode(std::string_view in, std::string& out, std::error_code& ec)
+{
     BrotliDecoderState* st = BrotliDecoderCreateInstance(nullptr, nullptr, nullptr);
     if (!st) {
         ec = errc::decompression_failure;
@@ -27,11 +30,12 @@ bool br_decode(std::string_view in, std::string& out, std::error_code& ec) {
         uint8_t* next_out = buf;
         size_t avail_out = sizeof(buf);
 
-        const BrotliDecoderResult r =
-            BrotliDecoderDecompressStream(st, &avail_in, &next_in, &avail_out, &next_out, nullptr);
+        const BrotliDecoderResult r = BrotliDecoderDecompressStream(st, &avail_in, &next_in,
+                                                                    &avail_out, &next_out, nullptr);
 
         const size_t produced = static_cast<size_t>(next_out - buf);
-        if (produced) out.append(reinterpret_cast<const char*>(buf), produced);
+        if (produced)
+            out.append(reinterpret_cast<const char*>(buf), produced);
 
         if (r == BROTLI_DECODER_RESULT_SUCCESS) {
             BrotliDecoderDestroyInstance(st);

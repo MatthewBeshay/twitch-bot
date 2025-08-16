@@ -1,7 +1,8 @@
 #pragma once
 
-#include <chrono>
+// C++ Standard Library
 #include <cctype>
+#include <chrono>
 #include <optional>
 #include <span>
 #include <string>
@@ -14,27 +15,32 @@ namespace tb::net {
 enum class SameSite { kNull, kLax, kStrict, kNone };
 
 struct Cookie {
-  std::string name;
-  std::string value;
+    std::string name;
+    std::string value;
 
-  // Attributes
-  std::string domain;
-  std::string path = "/";
-  bool secure = false;
-  bool http_only = true;
-  bool partitioned = false;
-  std::optional<int> max_age; // seconds
-  std::optional<std::chrono::system_clock::time_point> expires;
-  SameSite same_site = SameSite::kNull;
+    // Attributes
+    std::string domain;
+    std::string path = "/";
+    bool secure = false;
+    bool http_only = true;
+    bool partitioned = false;
+    std::optional<int> max_age; // seconds
+    std::optional<std::chrono::system_clock::time_point> expires;
+    SameSite same_site = SameSite::kNull;
 
-  Cookie() = default;
-  Cookie(std::string n, std::string v) : name(std::move(n)), value(std::move(v)) {}
+    Cookie() = default;
+    Cookie(std::string n, std::string v) : name(std::move(n)), value(std::move(v))
+    {
+    }
 
-  [[nodiscard]] bool expired_at(std::chrono::system_clock::time_point now) const noexcept {
-    if (max_age && *max_age <= 0) return true;
-    if (expires) return now >= *expires;
-    return false;
-  }
+    [[nodiscard]] bool expired_at(std::chrono::system_clock::time_point now) const noexcept
+    {
+        if (max_age && *max_age <= 0)
+            return true;
+        if (expires)
+            return now >= *expires;
+        return false;
+    }
 };
 
 // Parse a single Set-Cookie header line into a Cookie.
