@@ -77,3 +77,4 @@ Desktop.ini
 
 # Ignore persistence
 /channels.toml
+/app_channels.toml
