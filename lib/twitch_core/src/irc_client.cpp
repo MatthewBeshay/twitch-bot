@@ -30,11 +30,11 @@ using error_code = boost::system::error_code;
 IrcClient::IrcClient(boost::asio::any_io_executor executor,
                      boost::asio::ssl::context& ssl_context,
                      std::string_view access_token,
-                     std::string_view nickname)
+                     std::string_view control_channel)
     : ws_stream_{boost::asio::make_strand(executor), ssl_context}
     , ping_timer_{executor}
     , access_token_{access_token}
-    , nickname_{nickname}
+    , control_channel_{control_channel}
 {
 }
 
@@ -76,9 +76,9 @@ auto IrcClient::connect(std::span<const std::string_view> channels) -> boost::as
         co_await send_buffers(bufs_pass);
     }
 
-    // NICK <nickname>
+    // NICK <control_channel>
     {
-        std::array<const_buffer, 3> bufs_nick{buffer("NICK ", 5), buffer(nickname_),
+        std::array<const_buffer, 3> bufs_nick{buffer("NICK ", 5), buffer(control_channel_),
                                               boost::asio::buffer(kCRLF)};
         co_await send_buffers(bufs_nick);
     }

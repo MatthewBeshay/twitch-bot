@@ -35,7 +35,7 @@ public:
     IrcClient(boost::asio::any_io_executor executor,
               boost::asio::ssl::context& ssl_context,
               std::string_view access_token,
-              std::string_view nickname);
+              std::string_view control_channel);
 
     IrcClient(const IrcClient&) = delete;
     IrcClient(IrcClient&&) noexcept = default;
@@ -110,7 +110,7 @@ private:
     std::string line_tail_;
 
     std::string access_token_;
-    std::string nickname_;
+    std::string control_channel_;
 };
 
 template <typename Handler>
