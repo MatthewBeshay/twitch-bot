@@ -1,0 +1,30 @@
+# .cmake-format.yaml
+
+format:
+  line_width: 120
+  tab_size: 2
+  line_ending: unix
+  dangle_parens: false
+  max_pargs_hwrap: 3
+  separate_ctrl_name_with_space: false
+  separate_fn_name_with_space: false
+
+parse:
+  additional_commands:
+    foo:
+      flags: [BAR, BAZ]
+      kwargs:
+        DEPENDS: "*"
+        HEADERS: "*"
+        SOURCES: "*"
+    project_set_warnings:
+      pargs: 1
+    project_enable_sanitisers:
+      pargs: 1
+    myproject_enable_hardening:
+      pargs: 3
+
+markup:
+  enable_markup: false
+  bullet_char: "*"
+  enum_char: "."

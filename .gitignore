@@ -73,3 +73,7 @@ Desktop.ini
 
 # Ignore the real config file
 /config.toml
+/app_config.toml
+
+# Ignore persistence
+/channels.toml

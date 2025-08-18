@@ -1,19 +1,14 @@
-# --------- FACEIT DATA API ---------
-[faceit]
-api_key = ""
-
-# --------- TWITCH CHAT ---------
-[twitch.chat]
-# include the "oauth:" prefix
-oauth_token   = ""
-refresh_token = ""
-
-# --------- TWITCH APP ---------
+# ---- Twitch application ----
 [twitch.app]
-client_id     = ""
-client_secret = ""
+client_id     = "your_client_id"
+client_secret = "your_client_secret"
 
-# ----- Bot configuration (Twitch) -----
+# ---- Bot identity ----
 [twitch.bot]
-# channel name for the bot to join
-channel = ""
+login = "your_bot_login"           # lowercase
+# control_channel = "somechannel"  # optional; defaults to login
+
+# ---- OAuth tokens (user access token flow) ----
+[twitch.auth]
+access_token  = "user_access_token_without_oauth_prefix"
+refresh_token = "refresh_token_for_that_user_access_token"

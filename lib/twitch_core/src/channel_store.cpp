@@ -1,0 +1,200 @@
+// C++ Standard Library
+#include <fstream>
+#include <future>
+#include <iostream>
+#include <sstream>
+#include <system_error>
+
+// Project
+#include <tb/twitch/channel_store.hpp>
+
+namespace {
+// Write-back debounce interval.
+inline constexpr std::chrono::seconds kSaveDelay{5};
+} // unnamed namespace
+
+namespace twitch_bot {
+
+// Wait until every handler queued on strand_ completes.
+ChannelStore::~ChannelStore()
+{
+    try {
+        // If we're already running on the strand, there cannot be any other
+        // concurrently-executing handlers on it; just return.
+        if (strand_.running_in_this_thread())
+            return;
+
+        std::promise<void> done;
+        auto fut = done.get_future();
+        boost::asio::post(strand_, [p = std::move(done)]() mutable { p.set_value(); });
+        fut.wait();
+    } catch (const std::exception& ex) {
+        std::cerr << "[ChannelStore::~ChannelStore] exception: " << ex.what() << '\n';
+    } catch (...) {
+        std::cerr << "[ChannelStore::~ChannelStore] unknown exception\n";
+    }
+}
+
+void ChannelStore::load()
+{
+    if (!std::filesystem::exists(filename_))
+        return;
+
+    toml::table tbl;
+    try {
+        tbl = toml::parse_file(filename_.string());
+    } catch (const toml::parse_error& e) {
+        std::cerr << "[ChannelStore] parse error: " << e << '\n';
+        return;
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "[ChannelStore] fs error: " << e.what() << '\n';
+        return;
+    }
+
+    std::lock_guard guard{data_mutex_};
+    channel_data_.clear();
+    channel_data_.reserve(tbl.size());
+
+    for (const auto& [key, node] : tbl) {
+        if (auto* tbl_ptr = node.as_table()) {
+            ChannelInfo info;
+
+            if (auto* alias_node = tbl_ptr->get("alias"); alias_node && alias_node->is_string()) {
+                info.alias = alias_node->value<std::string>();
+            }
+
+            if (auto* nick_node = tbl_ptr->get("faceit_nick");
+                nick_node && nick_node->is_string()) {
+                info.faceit_nick = nick_node->value<std::string>();
+            }
+
+            if (auto* id_node = tbl_ptr->get("faceit_id"); id_node && id_node->is_string()) {
+                info.faceit_id = id_node->value<std::string>();
+            }
+
+            channel_data_.emplace(std::piecewise_construct,
+                                  std::forward_as_tuple(key),
+                                  std::forward_as_tuple(std::move(info)));
+        }
+    }
+}
+
+void ChannelStore::save() const noexcept
+{
+    dirty_.store(true, std::memory_order_relaxed);
+
+    bool expected = false;
+    if (timer_scheduled_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        save_timer_.expires_after(kSaveDelay);
+        save_timer_.async_wait([this](const auto& err) {
+            timer_scheduled_.store(false, std::memory_order_relaxed);
+            if (!err && dirty_.exchange(false, std::memory_order_relaxed))
+                perform_save();
+        });
+    }
+}
+
+void ChannelStore::perform_save() const noexcept
+{
+    toml::table tbl = build_table();
+
+    // Write to temporary file then atomically rename.
+    const auto tmp = filename_.string() + ".tmp";
+    {
+        std::ofstream out{tmp, std::ios::trunc | std::ios::binary};
+        if (!out) {
+            std::cerr << "[ChannelStore] cannot open " << tmp << '\n';
+            return;
+        }
+
+        std::ostringstream oss;
+        oss << tbl;
+        const auto data = oss.str();
+        out.write(data.data(), static_cast<std::streamsize>(data.size()));
+        if (!out) {
+            std::cerr << "[ChannelStore] write failed: " << tmp << '\n';
+            return;
+        }
+    }
+
+    std::error_code ec;
+    std::filesystem::rename(tmp, filename_, ec);
+    if (ec) {
+        std::cerr << "[ChannelStore] rename failed: " << ec.message() << '\n';
+        std::filesystem::remove(tmp, ec);
+    }
+}
+
+toml::table ChannelStore::build_table() const
+{
+    toml::table tbl;
+    std::shared_lock guard{data_mutex_};
+
+    for (const auto& [key, info] : channel_data_) {
+        toml::table entry;
+        if (info.alias) {
+            entry.insert("alias", *info.alias);
+        }
+        if (info.faceit_nick) {
+            entry.insert("faceit_nick", *info.faceit_nick);
+        }
+        if (info.faceit_id) {
+            entry.insert("faceit_id", *info.faceit_id);
+        }
+        tbl.insert(key, std::move(entry));
+    }
+    return tbl;
+}
+
+// ------------------ thread-safe API ------------------
+
+void ChannelStore::add_channel(std::string_view channel)
+{
+    std::lock_guard guard{data_mutex_};
+    channel_data_.emplace(
+        std::piecewise_construct, std::forward_as_tuple(channel), std::forward_as_tuple());
+    dirty_.store(true, std::memory_order_relaxed);
+}
+
+void ChannelStore::remove_channel(std::string_view channel) noexcept
+{
+    std::lock_guard guard{data_mutex_};
+    channel_data_.erase(channel);
+    dirty_.store(true, std::memory_order_relaxed);
+}
+
+bool ChannelStore::contains(std::string_view channel) const noexcept
+{
+    std::shared_lock guard{data_mutex_};
+    return channel_data_.find(channel) != channel_data_.end();
+}
+
+std::optional<std::string> ChannelStore::get_alias(std::string_view channel) const
+{
+    std::shared_lock guard{data_mutex_};
+    if (auto itr = channel_data_.find(channel); itr != channel_data_.end() && itr->second.alias) {
+        return *itr->second.alias; // copy for safety
+    }
+    return std::nullopt;
+}
+
+void ChannelStore::set_alias(std::string_view channel, std::optional<std::string> alias)
+{
+    std::lock_guard guard{data_mutex_};
+    if (auto itr = channel_data_.find(channel); itr != channel_data_.end()) {
+        itr->second.alias = std::move(alias);
+        dirty_.store(true, std::memory_order_relaxed);
+    }
+}
+
+void ChannelStore::channel_names(std::vector<std::string_view>& out) const
+{
+    std::shared_lock guard{data_mutex_};
+    out.clear();
+    out.reserve(channel_data_.size());
+    for (const auto& [name, info] : channel_data_) {
+        out.push_back(name); // copy to avoid dangling
+    }
+}
+
+} // namespace twitch_bot
