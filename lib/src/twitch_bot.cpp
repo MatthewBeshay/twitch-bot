@@ -382,51 +382,98 @@ void TwitchBot::run()
 
 boost::asio::awaitable<void> TwitchBot::run_bot() noexcept
 {
-    std::vector<std::string_view> channels;
-    channel_store_.channel_names(channels);
-    if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end()) {
-        channels.push_back(control_channel_);
+    // Outer loop keeps the bot connected. Any orderly or error exit will retry.
+    for (;;) {
+        // Build the channel list fresh each time so joins reflect !join/!leave while running
+        std::vector<std::string_view> channels;
+        channel_store_.channel_names(channels);
+        if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end()) {
+            channels.push_back(control_channel_);
+        }
+
+        // Ensure we have a valid token and set it on the IRC client
+        co_await helix_client_.ensure_valid_token();
+
+        std::string chat_token = helix_client_.current_token();
+        if (chat_token.rfind("oauth:", 0) != 0) {
+            chat_token = "oauth:" + chat_token;
+        }
+        irc_client_.set_oauth_token(chat_token);
+
+        // Attempt to connect - no co_await in catch
+        bool connected = false;
+        try {
+            co_await irc_client_.connect(channels);
+            connected = true;
+        } catch (const std::exception &e) {
+            std::cerr << "[TwitchBot] IRC connect error: " << e.what() << '\n';
+        }
+        if (!connected) {
+            // Short backoff before retry
+            boost::asio::steady_timer pause{pool_};
+            pause.expires_after(std::chrono::seconds{3});
+            co_await pause.async_wait(boost::asio::use_awaitable);
+            continue; // try again
+        }
+
+        auto exec = co_await boost::asio::this_coro::executor;
+
+        // A timer used as a simple wake-up signal to trigger reconnect
+        boost::asio::steady_timer reconnect_signal{pool_};
+        reconnect_signal.expires_at(std::chrono::steady_clock::time_point::max());
+
+        // Keep-alive PING loop - ends automatically if timers are cancelled or the socket dies
+        boost::asio::co_spawn(
+            exec,
+            [this]() noexcept -> boost::asio::awaitable<void> { co_await irc_client_.ping_loop(); },
+            boost::asio::detached);
+
+        // Read and dispatch loop. If the server sends RECONNECT or the read ends with error,
+        // cancel the signal timer to break the wait below and start a reconnect.
+        boost::asio::co_spawn(
+            exec,
+            [this, &reconnect_signal]() noexcept -> boost::asio::awaitable<void> {
+                try {
+                    co_await irc_client_.read_loop([this, &reconnect_signal](std::string_view raw) {
+                        std::cout << "[IRC] " << raw << '\n';
+                        auto msg = parse_irc_line(raw);
+
+                        // Server-initiated maintenance reconnect request
+                        if (msg.command == "RECONNECT") {
+                            // Proactively close and wake the supervisor loop
+                            irc_client_.close();
+                            reconnect_signal.cancel();
+                            return;
+                        }
+
+                        // Normal chat routing
+                        dispatcher_.dispatch(std::move(msg));
+                    });
+                } catch (...) {
+                    // Any read failure or closure - trigger reconnect
+                    reconnect_signal.cancel();
+                }
+                co_return;
+            },
+            boost::asio::detached);
+
+        // Wait until either RECONNECT was seen or the read loop exited
+        try {
+            co_await reconnect_signal.async_wait(boost::asio::use_awaitable);
+        } catch (...) {
+            // Timer will be cancelled to wake us - ignore the cancellation error
+        }
+
+        // Close out the current connection before looping back to reconnect
+        irc_client_.close();
+
+        // Small backoff to avoid hammering on repeated failures
+        boost::asio::steady_timer pause{pool_};
+        pause.expires_after(std::chrono::seconds{2});
+        co_await pause.async_wait(boost::asio::use_awaitable);
+
+        // loop continues to reconnect
     }
-
-    co_await helix_client_.ensure_valid_token();
-
-    std::string chat_tok = helix_client_.current_token();
-    if (chat_tok.rfind("oauth:", 0) != 0) {
-        chat_tok = "oauth:" + chat_tok;
-    }
-
-    irc_client_.set_oauth_token(chat_tok);
-
-    try {
-        co_await irc_client_.connect(channels);
-    } catch (const std::exception &e) {
-        std::cerr << "[TwitchBot] IRC connect error: " << e.what() << '\n';
-        co_return;
-    }
-
-    auto exec = co_await boost::asio::this_coro::executor;
-
-    // keep-alive PING
-    boost::asio::co_spawn(
-        exec,
-        [this]() noexcept -> boost::asio::awaitable<void> { co_await irc_client_.ping_loop(); },
-        boost::asio::detached);
-
-    // read / dispatch
-    boost::asio::co_spawn(
-        exec,
-        [this]() noexcept -> boost::asio::awaitable<void> {
-            co_await irc_client_.read_loop([this](std::string_view raw) {
-                std::cout << "[IRC] " << raw << '\n';
-                dispatcher_.dispatch(parse_irc_line(raw));
-            });
-        },
-        boost::asio::detached);
-
-    // idle indefinitely
-    boost::asio::steady_timer idle{pool_};
-    idle.expires_at(std::chrono::steady_clock::time_point::max());
-    co_await idle.async_wait(boost::asio::use_awaitable);
 }
 
 } // namespace twitch_bot
