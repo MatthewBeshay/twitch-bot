@@ -6,72 +6,80 @@
 #include <string_view>
 #include <unordered_map>
 
-// TOML++
+// Toml++
 #include <toml++/toml.hpp>
 
-// Project
-#include "integrations.hpp"
-#include <tb/utils/attributes.hpp>
+// App
+#include <app/integrations.hpp>
 
-namespace env {
-
+namespace app {
 namespace {
-    TB_FORCE_INLINE bool is_ascii_alnum(unsigned char c) noexcept
+
+    // ASCII predicates/transforms (no locale).
+    constexpr bool is_ascii_alnum(unsigned char c) noexcept
     {
         return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
     }
-    TB_FORCE_INLINE char ascii_toupper(unsigned char c) noexcept
+    constexpr char ascii_toupper(unsigned char c) noexcept
     {
         return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : static_cast<char>(c);
     }
-    TB_FORCE_INLINE char ascii_tolower(unsigned char c) noexcept
+    constexpr char ascii_tolower(unsigned char c) noexcept
     {
         return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
     }
 
 #ifdef _WIN32
-    // MSVC-safe env fetch (silences C4996)
+    // MSVC-safe getenv (avoids C4996).
     static std::optional<std::string> getenv_nonempty(const char* name) noexcept
     {
-        if (!name)
+        if (!name) {
             return std::nullopt;
+        }
         char* buf = nullptr;
         size_t len = 0;
-        if (_dupenv_s(&buf, &len, name) != 0 || !buf)
+        if (_dupenv_s(&buf, &len, name) != 0 || !buf) {
             return std::nullopt;
+        }
         std::string out{buf};
         free(buf);
-        if (out.empty())
+        if (out.empty()) {
             return std::nullopt;
+        }
         return out;
     }
 #else
     static std::optional<std::string> getenv_nonempty(const char* name) noexcept
     {
-        if (!name)
+        if (!name) {
             return std::nullopt;
-        if (const char* v = std::getenv(name); v && *v)
+        }
+        if (const char* v = std::getenv(name); v && *v) {
             return std::string(v);
+        }
         return std::nullopt;
     }
 #endif
+
 } // namespace
 
 Integrations Integrations::load()
 {
-    const auto default_path = std::filesystem::current_path() / "config.toml";
+    const auto default_path = std::filesystem::current_path() / "app_config.toml";
     if (!std::filesystem::exists(default_path)) {
-        throw EnvError("Integrations: config file not found at '" + default_path.string() + "'");
+        throw EnvError("Integrations: file not found at '" + default_path.string() + "'");
     }
     return parse_file(default_path);
 }
 
 Integrations Integrations::load_file(const std::filesystem::path& path)
 {
-    if (path.empty())
+    if (path.empty()) {
         throw EnvError("Integrations: path must not be empty");
-    if (!std::filesystem::exists(path))
+    }
+    if (!std::filesystem::exists(path)) {
         throw EnvError("Integrations: file not found at '" + path.string() + "'");
+    }
     return parse_file(path);
 }
 
@@ -83,39 +91,43 @@ bool Integrations::has(std::string_view service) const noexcept
 
 std::string Integrations::get(std::string_view service, std::string_view key) const
 {
-    // 1) Env override wins
-    if (auto e = env_override(service, key))
+    if (auto e = env_override(service, key)) {
         return *e;
+    }
 
-    // 2) From file
     const auto s = to_lower_ascii(service);
     const auto it = data_.find(s);
-    if (it == data_.end())
+    if (it == data_.end()) {
         throw EnvError("Integrations: missing service '" + std::string(service) + "'");
+    }
 
     const auto& kv = it->second;
     const auto kit = kv.find(std::string(key));
-    if (kit == kv.end() || kit->second.empty())
+    if (kit == kv.end() || kit->second.empty()) {
         throw EnvError("Integrations: missing key '" + std::string(key) + "' for service '"
                        + std::string(service) + "'");
+    }
     return kit->second;
 }
 
 std::optional<std::string> Integrations::get_opt(std::string_view service,
                                                  std::string_view key) const
 {
-    if (auto e = env_override(service, key))
+    if (auto e = env_override(service, key)) {
         return e;
+    }
 
     const auto s = to_lower_ascii(service);
     const auto it = data_.find(s);
-    if (it == data_.end())
+    if (it == data_.end()) {
         return std::nullopt;
+    }
 
     const auto& kv = it->second;
     const auto kit = kv.find(std::string(key));
-    if (kit == kv.end() || kit->second.empty())
+    if (kit == kv.end() || kit->second.empty()) {
         return std::nullopt;
+    }
     return kit->second;
 }
 
@@ -123,14 +135,15 @@ std::unordered_map<std::string, std::string> Integrations::values(std::string_vi
 {
     const auto s = to_lower_ascii(service);
     const auto it = data_.find(s);
-    if (it == data_.end())
+    if (it == data_.end()) {
         return {};
+    }
 
-    // Apply env overrides (env wins per key).
-    auto out = it->second;
+    auto out = it->second; // copy file values
     for (auto& [k, v] : out) {
-        if (auto e = env_override(service, k))
+        if (auto e = env_override(service, k)) {
             v = std::move(*e);
+        }
     }
     return out;
 }
@@ -153,21 +166,23 @@ Integrations Integrations::parse_file(const std::filesystem::path& path)
     if (auto* integrations = tbl.get_as<toml::table>("integrations")) {
         map.reserve(integrations->size());
         for (auto&& [svc_key, svc_node] : *integrations) {
-            if (!svc_node.is_table())
+            if (!svc_node.is_table()) {
                 continue;
-            const auto svc_name = to_lower_ascii(std::string_view{svc_key.str()});
+            }
+            const auto svc_name = to_lower_ascii(svc_key.str());
 
             KV kv;
             if (const auto* t = svc_node.as_table()) {
                 kv.reserve(t->size());
                 for (auto&& [k, v] : *t) {
-                    if (auto sval = v.value<std::string>(); sval.has_value())
+                    if (auto sval = v.value<std::string>(); sval.has_value()) {
                         kv.emplace(k.str(), std::move(*sval));
+                    }
                 }
             }
-
-            if (!kv.empty())
+            if (!kv.empty()) {
                 map.emplace(svc_name, std::move(kv));
+            }
         }
     }
 
@@ -178,19 +193,19 @@ std::string Integrations::to_lower_ascii(std::string_view s)
 {
     std::string out;
     out.reserve(s.size());
-    for (unsigned char c : s)
+    for (unsigned char c : s) {
         out.push_back(ascii_tolower(c));
+    }
     return out;
 }
 
 std::optional<std::string> Integrations::env_override(std::string_view service,
                                                       std::string_view key)
 {
-    auto mk = [](std::string_view a, std::string_view b, std::string_view c) {
-        // Reserve with separators to reduce reallocs.
+    const auto mk = [](std::string_view a, std::string_view b, std::string_view c) {
         std::string s;
         s.reserve(a.size() + b.size() + c.size() + 2);
-        auto add = [&s](std::string_view t) {
+        const auto add = [&s](std::string_view t) {
             for (unsigned char ch : t) {
                 s.push_back(is_ascii_alnum(ch) ? ascii_toupper(ch) : '_');
             }
@@ -208,20 +223,22 @@ std::optional<std::string> Integrations::env_override(std::string_view service,
     };
 
     const auto primary = mk("INTEGRATIONS", service, key);
-    if (auto v = getenv_nonempty(primary.c_str()))
+    if (auto v = getenv_nonempty(primary.c_str())) {
         return v;
+    }
 
     const auto fallback1 = mk(service, key, "");
-    if (auto v = getenv_nonempty(fallback1.c_str()))
+    if (auto v = getenv_nonempty(fallback1.c_str())) {
         return v;
+    }
 
     if (key == "api_key") {
         const auto fallback2 = mk(service, "API_KEY", "");
-        if (auto v = getenv_nonempty(fallback2.c_str()))
+        if (auto v = getenv_nonempty(fallback2.c_str())) {
             return v;
+        }
     }
-
     return std::nullopt;
 }
 
-} // namespace env
+} // namespace app

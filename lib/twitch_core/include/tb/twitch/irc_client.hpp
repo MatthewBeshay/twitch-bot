@@ -123,7 +123,7 @@ auto IrcClient::read_loop(Handler handler) -> boost::asio::awaitable<void>
         std::string_view chunk{reinterpret_cast<const char*>(data.data()), data.size()};
         read_buffer_.consume(data.size());
 
-        // Accumulate into tail, then split on CRLF — never emit a partial line
+        // Accumulate into tail, then split on CRLF - never emit a partial line
         line_tail_.append(chunk.data(), chunk.size());
 
         std::size_t begin = 0;

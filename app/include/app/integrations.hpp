@@ -8,48 +8,50 @@
 #include <string_view>
 #include <unordered_map>
 
-// Project
-#include <tb/twitch/config.hpp>
+namespace app {
 
-namespace env {
+// Simple error for app-side config loading.
+class EnvError final : public std::runtime_error
+{
+public:
+    explicit EnvError(const std::string& msg) noexcept : std::runtime_error{msg}
+    {
+    }
+};
 
+// Load integration credentials from app_config.toml,
+// with environment-variable overrides.
+// Env precedence (case-insensitive service/key):
+//   1) INTEGRATIONS_<SERVICE>_<KEY>
+//   2) <SERVICE>_<KEY>
+//   3) If key == "api_key": <SERVICE>_API_KEY
 class Integrations
 {
 public:
-    // Load from "./config.toml".
-    [[nodiscard]] static Integrations load();
+    [[nodiscard]] static Integrations load(); // from ./app_config.toml
+    [[nodiscard]] static Integrations load_file(const std::filesystem::path&); // explicit file
 
-    // Load from an explicit file path.
-    [[nodiscard]] static Integrations load_file(const std::filesystem::path& path);
-
-    // True if we have an entry for this service (case-insensitive).
     [[nodiscard]] bool has(std::string_view service) const noexcept;
 
-    // Get a specific key for a service, honoring env overrides.
-    // Throws EnvError if not present anywhere.
+    // Throws EnvError if missing in both env and file.
     [[nodiscard]] std::string get(std::string_view service, std::string_view key) const;
 
-    // Convenience: fetch the common "api_key" field.
     [[nodiscard]] std::string api_key(std::string_view service) const
     {
         return get(service, "api_key");
     }
 
-    // Optional getter (returns std::nullopt if missing).
     [[nodiscard]] std::optional<std::string> get_opt(std::string_view service,
                                                      std::string_view key) const;
-
-    // Optional getter for api_key.
     [[nodiscard]] std::optional<std::string> api_key_opt(std::string_view service) const
     {
         return get_opt(service, "api_key");
     }
 
-    // Return all key/values for a service (TOML values as strings), after env overrides.
+    // Returns merged (env overrides file) key/values for a service.
     [[nodiscard]] std::unordered_map<std::string, std::string>
     values(std::string_view service) const;
 
-    // Path the config was loaded from.
     [[nodiscard]] const std::filesystem::path& path() const noexcept
     {
         return path_;
@@ -59,10 +61,10 @@ private:
     using KV = std::unordered_map<std::string, std::string>;
     using Map = std::unordered_map<std::string, KV>; // service -> (key -> value)
 
-    [[nodiscard]] static Integrations parse_file(const std::filesystem::path& path);
+    [[nodiscard]] static Integrations parse_file(const std::filesystem::path&);
 
-    // ASCII-only transforms (avoid locale pitfalls).
-    [[nodiscard]] static std::string to_lower_ascii(std::string_view s);
+    // ASCII helpers (no locale).
+    [[nodiscard]] static std::string to_lower_ascii(std::string_view);
     [[nodiscard]] static std::optional<std::string> env_override(std::string_view service,
                                                                  std::string_view key);
 
@@ -75,4 +77,4 @@ private:
     Map data_;
 };
 
-} // namespace env
+} // namespace app

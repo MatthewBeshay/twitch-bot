@@ -3,6 +3,7 @@
 // C++ Standard Library
 #include <algorithm>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16,7 +17,6 @@
 #include <boost/asio/thread_pool.hpp>
 
 // Project
-#include "channel_store.hpp"
 #include "chat_rate_limiter.hpp"
 #include "command_dispatcher.hpp"
 #include "helix_client.hpp"
@@ -51,18 +51,10 @@ public:
     // Register a listener for non-command chat messages.
     void add_chat_listener(chat_listener_t listener);
 
-    // ----------------------- Exposed surface for app layer --------------------
-
     // Access the command dispatcher to register app-level commands.
     [[nodiscard]] CommandDispatcher& dispatcher() noexcept
     {
         return dispatcher_;
-    }
-
-    // Per-channel persistent/settings store.
-    [[nodiscard]] ChannelStore& channel_store() noexcept
-    {
-        return channel_store_;
     }
 
     // Helix client (for stream status, etc.).
@@ -86,6 +78,13 @@ public:
     {
         return control_channel_;
     }
+
+    // Set channels to auto-join on (re)connect. No persistence in core.
+    void set_initial_channels(std::vector<std::string> channels);
+
+    // Runtime join/part helpers.
+    [[nodiscard]] boost::asio::awaitable<void> join_channel(std::string_view channel);
+    [[nodiscard]] boost::asio::awaitable<void> part_channel(std::string_view channel);
 
     // Safe chat helpers: wrap to 500 bytes and sanitize CR/LF.
     boost::asio::awaitable<void> say(std::string_view channel, std::string_view text);
@@ -120,7 +119,9 @@ private:
     IrcClient irc_client_;
     CommandDispatcher dispatcher_;
     HelixClient helix_client_;
-    ChannelStore channel_store_;
+
+    std::mutex chan_mutex_;
+    std::vector<std::string> initial_channels_;
 };
 
 } // namespace twitch_bot
