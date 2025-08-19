@@ -31,6 +31,13 @@ int main()
 
         app::ChannelStore channels{bot.executor(), "channels.toml"};
         channels.load();
+
+        {
+            std::vector<std::string> initial;
+            channels.channel_names(initial);
+            bot.set_initial_channels(std::move(initial));
+        }
+
         app::control_commands(bot, channels);
 
         const auto integrations = app::Integrations::load();
