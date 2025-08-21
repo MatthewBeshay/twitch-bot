@@ -19,6 +19,7 @@
 // Boost.Beast
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/core/static_buffer.hpp>
+#include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/websocket/ssl.hpp>
 #include <boost/beast/websocket/stream.hpp>
 
@@ -98,8 +99,8 @@ private:
     [[nodiscard]] static std::size_t
     utf8_chunk_by_words(std::string_view s, std::size_t start, std::size_t max_bytes) noexcept;
 
-    using tcp_socket_type = boost::asio::ip::tcp::socket;
-    using ssl_stream_type = boost::asio::ssl::stream<tcp_socket_type>;
+    using tcp_stream_type = boost::beast::tcp_stream;
+    using ssl_stream_type = boost::asio::ssl::stream<tcp_stream_type>;
     using websocket_stream_type = boost::beast::websocket::stream<ssl_stream_type>;
 
     websocket_stream_type ws_stream_;
