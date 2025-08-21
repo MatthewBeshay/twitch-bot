@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-// Boost.asio
+// Boost.Asio
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/connect.hpp>
@@ -10,6 +10,11 @@
 #include <boost/asio/strand.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
+
+// Boost.Beast
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/beast/websocket.hpp>
 
 // Boost.system
 #include <boost/system/error_code.hpp>
@@ -26,6 +31,7 @@ using boost::asio::buffer;
 using boost::asio::const_buffer;
 using boost::asio::use_awaitable;
 using error_code = boost::system::error_code;
+namespace beast = boost::beast;
 
 IrcClient::IrcClient(boost::asio::any_io_executor executor,
                      boost::asio::ssl::context& ssl_context,
@@ -41,49 +47,54 @@ IrcClient::IrcClient(boost::asio::any_io_executor executor,
 // Resolve, connect, upgrade to TLS and WebSocket, then join channels.
 auto IrcClient::connect(std::span<const std::string_view> channels) -> boost::asio::awaitable<void>
 {
-    static char host_name[] = "irc-ws.chat.twitch.tv";
-    static char port_str[] = "443";
+    static const char host_name[] = "irc-ws.chat.twitch.tv";
+    static const char port_str[] = "443";
 
-    // TCP connect
     auto executor = co_await boost::asio::this_coro::executor;
-    boost::asio::ip::tcp::resolver resolver{executor};
-    auto endpoints = co_await resolver.async_resolve(host_name, port_str, use_awaitable);
-    co_await boost::asio::async_connect(
-        boost::beast::get_lowest_layer(ws_stream_), endpoints, use_awaitable);
 
-    // TLS handshake + SNI
+    boost::asio::ip::tcp::resolver resolver{executor};
+    auto results = co_await resolver.async_resolve(host_name, port_str, use_awaitable);
+
+    // Use Beast tcp_stream so we can set a deadline
+    auto& tcp = beast::get_lowest_layer(ws_stream_);
+    tcp.expires_after(std::chrono::seconds(30));
+    co_await tcp.async_connect(results, use_awaitable);
+    tcp.expires_never();
+
     if (!::SSL_set_tlsext_host_name(ws_stream_.next_layer().native_handle(), host_name)) {
-        // Surface as a stream error; users can catch around connect()
         throw std::system_error{static_cast<int>(::ERR_get_error()),
                                 boost::asio::error::get_ssl_category(), "SNI failure"};
     }
+
+    tcp.expires_after(std::chrono::seconds(30));
     co_await ws_stream_.next_layer().async_handshake(boost::asio::ssl::stream_base::client,
                                                      use_awaitable);
+    tcp.expires_never();
 
-    // WebSocket handshake
     ws_stream_.set_option(
-        boost::beast::websocket::stream_base::timeout::suggested(boost::beast::role_type::client));
-    ws_stream_.set_option(boost::beast::websocket::stream_base::decorator(
-        [](boost::beast::websocket::request_type& req) {
-            req.set(boost::beast::http::field::user_agent, "TwitchBot");
+        beast::websocket::stream_base::timeout::suggested(beast::role_type::client));
+    ws_stream_.set_option(
+        beast::websocket::stream_base::decorator([](beast::websocket::request_type& req) {
+            req.set(beast::http::field::origin, "https://www.twitch.tv");
+            req.set(beast::http::field::user_agent, "TwitchBotCore/1.0 (+irc)");
         }));
-    co_await ws_stream_.async_handshake(host_name, "/", use_awaitable);
 
-    // PASS <access_token>
+    tcp.expires_after(std::chrono::seconds(30));
+    co_await ws_stream_.async_handshake(host_name, "/", use_awaitable);
+    tcp.expires_never();
+
     {
+        // PASS <access_token>  (should already include "oauth:")
         std::array<const_buffer, 3> bufs_pass{buffer("PASS ", 5), buffer(access_token_),
                                               boost::asio::buffer(kCRLF)};
         co_await send_buffers(bufs_pass);
     }
-
-    // NICK <control_channel>
     {
+        // NICK <bot_username> (your control_channel_ == bot login)
         std::array<const_buffer, 3> bufs_nick{buffer("NICK ", 5), buffer(control_channel_),
                                               boost::asio::buffer(kCRLF)};
         co_await send_buffers(bufs_nick);
     }
-
-    // Negotiate IRCv3 capabilities.
     {
         static constexpr char caps[]
             = "CAP REQ :twitch.tv/membership twitch.tv/tags twitch.tv/commands\r\n";
@@ -91,7 +102,6 @@ auto IrcClient::connect(std::span<const std::string_view> channels) -> boost::as
         co_await send_buffers(bufs);
     }
 
-    // JOIN #<channel>
     for (auto channel : channels) {
         std::array<const_buffer, 5> bufs{buffer("JOIN", 4), buffer(" ", 1), buffer("#", 1),
                                          buffer(channel), boost::asio::buffer(kCRLF)};
@@ -166,7 +176,6 @@ std::size_t IrcClient::utf8_clip_len(std::string_view s, std::size_t max_bytes) 
     if (s.size() <= max_bytes)
         return s.size();
     std::size_t i = max_bytes;
-    // back up to the first non-continuation byte (check i-1, not i)
     while (i > 0 && (static_cast<unsigned char>(s[i - 1]) & 0xC0) == 0x80)
         --i;
     return i;
@@ -182,7 +191,6 @@ std::size_t IrcClient::utf8_chunk_by_words(std::string_view s,
         return 0;
 
     std::size_t end = start + hard;
-    // Prefer to break on last space before hard boundary
     for (std::size_t i = end; i > start; --i) {
         if (s[i - 1] == ' ') {
             end = i - 1;
@@ -190,7 +198,7 @@ std::size_t IrcClient::utf8_chunk_by_words(std::string_view s,
         }
     }
     if (end == start)
-        end = start + hard; // fallback
+        end = start + hard;
     return end - start;
 }
 
@@ -212,7 +220,7 @@ auto IrcClient::privmsg_wrap(std::string_view channel, std::string_view text) no
 
         pos += len;
         while (pos < body.size() && body[pos] == ' ')
-            ++pos; // drop leading spaces
+            ++pos;
     }
 }
 
@@ -263,9 +271,10 @@ void IrcClient::close() noexcept
 {
     ping_timer_.cancel();
 
+    // Close the websocket cleanly; don't also async_shutdown TLS here to avoid races.
     boost::asio::post(ws_stream_.get_executor(), [this] {
-        ws_stream_.async_close(boost::beast::websocket::close_code::normal, [](error_code) { });
-        ws_stream_.next_layer().async_shutdown([](error_code) { });
+        ws_stream_.async_close(beast::websocket::close_code::normal,
+                               [](error_code) { /* ignore */ });
     });
 }
 
