@@ -17,7 +17,6 @@
 #include <boost/asio/thread_pool.hpp>
 
 // Project
-#include "chat_rate_limiter.hpp"
 #include "command_dispatcher.hpp"
 #include "helix_client.hpp"
 #include "irc_client.hpp"

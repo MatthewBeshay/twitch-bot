@@ -70,9 +70,7 @@ boost::asio::awaitable<void> TwitchBot::join_channel(std::string_view channel)
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
     // IRC: JOIN #<channel>
-    std::array<boost::asio::const_buffer, 3> cmd{
-        boost::asio::buffer("JOIN #", 6), boost::asio::buffer(channel), boost::asio::buffer(kCRLF)};
-    co_await irc_client_.send_buffers(cmd);
+    co_await irc_client_.join(channel);
 
     // Persist in-memory intent so reconnects re-join
     {
@@ -89,10 +87,7 @@ boost::asio::awaitable<void> TwitchBot::part_channel(std::string_view channel)
 {
     co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
-    // IRC: PART #<channel>
-    std::array<boost::asio::const_buffer, 3> cmd{
-        boost::asio::buffer("PART #", 6), boost::asio::buffer(channel), boost::asio::buffer(kCRLF)};
-    co_await irc_client_.send_buffers(cmd);
+    co_await irc_client_.part(channel);
 
     // Stop auto-rejoining on future reconnects
     {

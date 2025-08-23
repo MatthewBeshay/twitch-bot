@@ -47,6 +47,18 @@ target_link_libraries(TwitchBotApp PRIVATE glaze::glaze tomlplusplus::tomlpluspl
 
 target_compile_features(TwitchBotApp PRIVATE cxx_std_23)
 
+set(CACERT_PEM "${CMAKE_SOURCE_DIR}/third_party/cacert/cacert.pem")
+if(EXISTS "${CACERT_PEM}")
+  message(STATUS "Using vendored cacert.pem: ${CACERT_PEM}")
+  target_compile_definitions(TwitchBotApp PRIVATE TB_CACERT_PEM_PATH="${CACERT_PEM}")
+  add_custom_command(TARGET TwitchBotApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CACERT_PEM}"
+            "$<TARGET_FILE_DIR:TwitchBotApp>/cacert.pem")
+else()
+  message(WARNING "third_party/cacert/cacert.pem not found. TLS verification will fail.")
+endif()
+
 if(MSVC)
   set_property(TARGET TwitchBotApp PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()
