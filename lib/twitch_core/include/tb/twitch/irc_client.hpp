@@ -154,6 +154,9 @@ private:
 
     std::string access_token_;
     std::string control_channel_;
+
+    boost::asio::steady_timer write_gate_;
+    bool write_inflight_ = false;
 };
 
 template <typename Handler>
@@ -165,11 +168,16 @@ template <typename Handler>
     for (;;) {
         co_await ws_stream_.async_read(read_buffer_, boost::asio::use_awaitable);
 
-        const auto data = read_buffer_.data();
+        // Treat Beast DynamicBuffer as a sequence per the contract.
+        auto const bs    = read_buffer_.cdata();
+        auto const total = boost::asio::buffer_size(bs);
+        if (TB_UNLIKELY(total == 0)) {
+            continue;
+        }
 
-        // MSVC-friendly cast: data.data() is void const*.
-        const auto* ptr = static_cast<const char*>(data.data());
-        std::string_view chunk{ptr, boost::asio::buffer_size(data)};
+        auto const first = *boost::asio::buffer_sequence_begin(bs);
+        auto const* ptr  = static_cast<char const*>(first.data());
+        std::string_view chunk{ptr, total};
 
         if (line_tail_.empty()) {
             // Zero-copy path. The handler must not retain the view.
@@ -222,8 +230,8 @@ template <typename Handler>
             }
         }
 
-        // Release the consumed bytes.
-        read_buffer_.consume(boost::asio::buffer_size(data));
+        // Release exactly the bytes we just processed.
+        read_buffer_.consume(total);
     }
 }
 

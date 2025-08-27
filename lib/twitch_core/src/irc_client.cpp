@@ -49,7 +49,9 @@ IrcClient::IrcClient(boost::asio::any_io_executor executor,
     , ping_timer_{executor}
     , access_token_{access_token}
     , control_channel_{control_channel}
+    , write_gate_{executor}
 {
+    write_gate_.expires_at(std::chrono::steady_clock::time_point::max());
 }
 
 IrcClient::~IrcClient() noexcept
@@ -227,13 +229,24 @@ auto IrcClient::send_buffers(std::span<const boost::asio::const_buffer> buffers)
     -> boost::asio::awaitable<void>
 {
     try {
-        co_await ws_stream_.async_write(buffers, use_awaitable);
-    } catch (...) {
-        // Best-effort signal. Keep noexcept to protect hot code paths.
-        try {
-            close();
-        } catch (...) {
+        while (write_inflight_) {
+            boost::system::error_code ec;
+            // Make sure the timer is in a waitable state.
+            write_gate_.expires_at(std::chrono::steady_clock::time_point::max());
+            co_await write_gate_.async_wait(
+                boost::asio::redirect_error(boost::asio::use_awaitable, ec));
         }
+
+        write_inflight_ = true;
+        co_await ws_stream_.async_write(buffers, boost::asio::use_awaitable);
+        write_inflight_ = false;
+
+        write_gate_.cancel();
+    } catch (...) {
+        write_inflight_ = false;
+        try { write_gate_.cancel(); } catch (...) {}
+
+        try { close(); } catch (...) {}
         co_return;
     }
 }
