@@ -14,16 +14,20 @@
 *.sdf
 ipch/
 
-# Build directories and output
-[Bb]in/
-[Oo]bj/
-[Dd]ebug*/
-[Rr]elease*/
-[Rr]eleases*/
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
 x64/
 x86/
-ARM/
 ARM64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+objfre/
+objchk/
 
 # ---------------------------------------------------------------------
 # CMake
