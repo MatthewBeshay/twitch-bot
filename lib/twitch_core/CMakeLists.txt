@@ -4,6 +4,9 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 add_library(tb_twitch_core STATIC)
+add_library(tb::twitch_core ALIAS tb_twitch_core)
+
+set_target_properties(tb_twitch_core PROPERTIES EXPORT_NAME twitch_core)
 
 target_sources(
   tb_twitch_core
@@ -38,7 +41,9 @@ find_package(tomlplusplus CONFIG REQUIRED)
 find_package(glaze CONFIG REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(Boost CONFIG REQUIRED COMPONENTS asio beast)
+
+find_package(boost_asio   CONFIG REQUIRED)
+find_package(boost_beast  CONFIG REQUIRED)
 
 target_link_libraries(
   tb_twitch_core
@@ -48,34 +53,34 @@ target_link_libraries(
     tomlplusplus::tomlplusplus
     glaze::glaze
     Microsoft.GSL::GSL
-    Boost::asio 
-    Boost::beast 
+    Boost::asio
+    Boost::beast
     OpenSSL::SSL
     OpenSSL::Crypto
 )
-target_link_libraries(tb_twitch_core PUBLIC )
 
-# Provide the absolute path to the vendored CA bundle for the library code.
 set(CACERT_PEM "${CMAKE_SOURCE_DIR}/third_party/cacert/cacert.pem")
-if(EXISTS "${CACERT_PEM}")
-  # Use forward slashes so the C string literal is not mangled on Windows
-  file(TO_CMAKE_PATH "${CACERT_PEM}" CACERT_PEM_FSLASH)
-  target_compile_definitions(tb_twitch_core PRIVATE TB_CACERT_PEM_PATH="${CACERT_PEM_FSLASH}")
-else()
+if(NOT EXISTS "${CACERT_PEM}")
   message(FATAL_ERROR "third_party/cacert/cacert.pem not found. Required for TLS verification.")
 endif()
 
-add_library(tb::twitch_core ALIAS tb_twitch_core)
+file(TO_CMAKE_PATH "${CACERT_PEM}" CACERT_PEM_FSLASH)
+
+target_compile_definitions(tb_twitch_core PRIVATE
+  $<BUILD_INTERFACE:TB_CACERT_PEM_PATH="${CACERT_PEM_FSLASH}">
+  $<INSTALL_INTERFACE:TB_CACERT_PEM_PATH="${CMAKE_INSTALL_DATADIR}/twitchbot/cacert.pem">
+)
 
 install(
   TARGETS tb_twitch_core
   EXPORT tb_twitch_coreTargets
-  FILE_SET HEADERS
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+install(FILES "${CACERT_PEM}" DESTINATION ${CMAKE_INSTALL_DATADIR}/twitchbot)
 
 install(
   EXPORT tb_twitch_coreTargets
@@ -84,13 +89,14 @@ install(
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_twitch_core
 )
 
-configure_package_config_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tb_twitch_coreConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfig.cmake
-  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_twitch_core
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
 )
 
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/tb_twitch_coreConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_twitch_core
 )

@@ -17,10 +17,10 @@
 // State bits for chunked decoder
 static_assert(std::numeric_limits<std::uint64_t>::digits == 64);
 
-constexpr std::uint64_t STATE_HAS_SIZE   = (std::uint64_t{1} << 63);  // 0x80000000
-constexpr std::uint64_t STATE_IS_CHUNKED = (std::uint64_t{1} << 62);  // 0x40000000
-constexpr std::uint64_t STATE_SIZE_MASK  = ~(std::uint64_t{3} << 62); // 0x3FFFFFFF
-constexpr std::uint64_t STATE_IS_ERROR   = ~std::uint64_t{0};         // 0xFFFFFFFF
+constexpr std::uint64_t STATE_HAS_SIZE = (std::uint64_t{ 1 } << 63); // 0x80000000
+constexpr std::uint64_t STATE_IS_CHUNKED = (std::uint64_t{ 1 } << 62); // 0x40000000
+constexpr std::uint64_t STATE_SIZE_MASK = ~(std::uint64_t{ 3 } << 62); // 0x3FFFFFFF
+constexpr std::uint64_t STATE_IS_ERROR = ~std::uint64_t{ 0 }; // 0xFFFFFFFF
 
 constexpr std::uint64_t CRLF_LEN = 2;
 
@@ -31,15 +31,18 @@ static constexpr auto make_hex_val()
     tbl.fill(0xFF);
 
     // '0'..'9'
-    for (unsigned char c = '0'; c <= '9'; ++c) {
+    for (unsigned char c = '0'; c <= '9'; ++c)
+    {
         tbl[c] = c - '0';
     }
     // 'A'..'F'
-    for (unsigned char c = 'A'; c <= 'F'; ++c) {
+    for (unsigned char c = 'A'; c <= 'F'; ++c)
+    {
         tbl[c] = 10 + (c - 'A');
     }
     // 'a'..'f'
-    for (unsigned char c = 'a'; c <= 'f'; ++c) {
+    for (unsigned char c = 'a'; c <= 'f'; ++c)
+    {
         tbl[c] = 10 + (c - 'a');
     }
     return tbl;
@@ -86,14 +89,16 @@ consume_hex_number(const char* TB_RESTRICT& ptr, size_t& len, uint64_t& state) n
     bool saw_digit = false;
 
     // Accumulate hex digits
-    while (len > 0) {
+    while (len > 0)
+    {
         const unsigned char c = static_cast<unsigned char>(*ptr);
         const unsigned char v = HEX_VAL[c];
         if (v == 0xFF)
             break; // not a hex digit
 
         // Overflow guard
-        if (size_accum > (STATE_SIZE_MASK >> 4) || ((size_accum << 4) | v) > STATE_SIZE_MASK) {
+        if (size_accum > (STATE_SIZE_MASK >> 4) || ((size_accum << 4) | v) > STATE_SIZE_MASK)
+        {
             state = STATE_IS_ERROR;
             return;
         }
@@ -103,20 +108,23 @@ consume_hex_number(const char* TB_RESTRICT& ptr, size_t& len, uint64_t& state) n
         saw_digit = true;
     }
 
-    if (!saw_digit) {
+    if (!saw_digit)
+    {
         // No hex digits at all: invalid header
         state = STATE_IS_ERROR;
         return;
     }
 
     // Skip optional chunk extensions until CR
-    while (len > 0 && *ptr != '\r') {
+    while (len > 0 && *ptr != '\r')
+    {
         ++ptr;
         --len;
     }
 
     // Need CRLF
-    if (len < 2 || ptr[0] != '\r' || ptr[1] != '\n') {
+    if (len < 2 || ptr[0] != '\r' || ptr[1] != '\n')
+    {
         return; // wait for more bytes
     }
     ptr += 2;
@@ -134,15 +142,18 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
                                                                uint64_t& state,
                                                                bool trailer = false) noexcept
 {
-    while (len > 0) {
-
+    while (len > 0)
+    {
         // Skip trailer bytes (post-zero-chunk CRLFs)
-        if (!(state & STATE_IS_CHUNKED) && has_chunk_size(state) && chunk_size(state) > 0) {
-            while (len > 0 && chunk_size(state) > 0) {
+        if (!(state & STATE_IS_CHUNKED) && has_chunk_size(state) && chunk_size(state) > 0)
+        {
+            while (len > 0 && chunk_size(state) > 0)
+            {
                 ++ptr;
                 --len;
                 dec_chunk_size(state, 1);
-                if (chunk_size(state) == 0) {
+                if (chunk_size(state) == 0)
+                {
                     state = 0;
                     return std::nullopt;
                 }
@@ -151,13 +162,16 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
         }
 
         // Parse a new chunk-size header
-        if (!has_chunk_size(state)) {
+        if (!has_chunk_size(state))
+        {
             consume_hex_number(ptr, len, state);
-            if (is_parsing_invalid_chunked_encoding(state)) {
+            if (is_parsing_invalid_chunked_encoding(state))
+            {
                 return std::nullopt;
             }
             // Empty-chunk signal (only trailing CRLFs remain)
-            if (has_chunk_size(state) && chunk_size(state) == 2) {
+            if (has_chunk_size(state) && chunk_size(state) == 2)
+            {
                 // After "0\r\n", there is the chunk terminator CRLF (2),
                 // plus the final empty-line CRLF (2) if we consume trailers here.
                 state = ((trailer ? 4ull : 2ull) | STATE_HAS_SIZE);
@@ -169,15 +183,18 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
         // Full chunk available?
         {
             const uint64_t sz = chunk_size(state);
-            if (len >= sz) {
+            if (len >= sz)
+            {
                 std::string_view chunk;
-                if (sz > 2) {
+                if (sz > 2)
+                {
                     chunk = std::string_view(ptr, static_cast<size_t>(sz - 2));
                 }
                 ptr += sz;
                 len -= static_cast<size_t>(sz);
                 state = STATE_IS_CHUNKED;
-                if (!chunk.empty()) {
+                if (!chunk.empty())
+                {
                     return chunk;
                 }
                 continue; // chunk had no payload; move on
@@ -189,7 +206,8 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
             const uint64_t sz = chunk_size(state);
             const size_t payload = (sz > 2 ? static_cast<size_t>(sz - 2) : 0u);
             const size_t nconsume = std::min(len, payload);
-            if (nconsume > 0) {
+            if (nconsume > 0)
+            {
                 std::string_view chunk(ptr, nconsume);
                 ptr += nconsume;
                 len -= nconsume;
@@ -207,7 +225,8 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
 }
 
 // Facilitate range-based for over decoded chunks.
-struct ChunkIterator {
+struct ChunkIterator
+{
     const char* TB_RESTRICT ptr; // current read pointer
     size_t len; // remaining length
     uint64_t* state; // pointer into external parser state
@@ -218,14 +237,15 @@ struct ChunkIterator {
     ChunkIterator(const char* TB_RESTRICT input_ptr,
                   size_t input_len,
                   uint64_t& input_state,
-                  bool trailer_mode = false)
-        : ptr(input_ptr), len(input_len), state(&input_state), trailer(trailer_mode)
+                  bool trailer_mode = false) :
+        ptr(input_ptr), len(input_len), state(&input_state), trailer(trailer_mode)
     {
         chunk = get_next_chunk(ptr, len, *state, trailer);
     }
 
     // end-iterator sentinel
-    ChunkIterator() : ptr(nullptr), len(0), state(nullptr), trailer(false), chunk(std::nullopt)
+    ChunkIterator() :
+        ptr(nullptr), len(0), state(nullptr), trailer(false), chunk(std::nullopt)
     {
     }
 

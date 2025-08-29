@@ -1,4 +1,4 @@
-﻿// C++ Standard Library
+// C++ Standard Library
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -16,20 +16,19 @@
 
 int main()
 {
-    try {
+    try
+    {
         const auto cfg = env::Config::load();
         const auto config_path = cfg.path();
 
-        twitch_bot::TwitchBot bot{cfg.auth().access_token, cfg.auth().refresh_token,
-                                  cfg.app().client_id, cfg.app().client_secret,
-                                  cfg.bot().control_channel};
+        twitch_bot::TwitchBot bot{ cfg.auth().access_token, cfg.auth().refresh_token, cfg.app().client_id, cfg.app().client_secret, cfg.bot().control_channel };
 
         // Persist refreshed access tokens back to config (best-effort).
         bot.helix().set_access_token_persistor([config_path](std::string_view tok) {
             (void)env::write_access_token_in_config(config_path, tok);
         });
 
-        app::ChannelStore channels{bot.executor(), "channels.toml"};
+        app::ChannelStore channels{ bot.executor(), "channels.toml" };
         channels.load();
 
         {
@@ -41,15 +40,19 @@ int main()
         app::control_commands(bot, channels);
 
         const auto integrations = app::Integrations::load();
-        app::AppChannelStore app_chan_store{"app_channels.toml"};
+        app::AppChannelStore app_chan_store{ "app_channels.toml" };
         app_chan_store.load();
         app::register_integrations(bot, integrations, app_chan_store);
 
         bot.run();
-    } catch (const env::EnvError& e) {
+    }
+    catch (const env::EnvError& e)
+    {
         std::cerr << "Configuration error: " << e.what() << '\n';
         return EXIT_FAILURE;
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         std::cerr << "Fatal startup error: " << e.what() << '\n';
         return EXIT_FAILURE;
     }

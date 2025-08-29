@@ -112,27 +112,30 @@
 #if __has_builtin(__builtin_assume)
 #define TB_ASSUME(x) __builtin_assume(x)
 #else
-#define TB_ASSUME(x)                                                                               \
-    do {                                                                                           \
-        if (!(x))                                                                                  \
-            __builtin_unreachable();                                                               \
+#define TB_ASSUME(x)                 \
+    do                               \
+    {                                \
+        if (!(x))                    \
+            __builtin_unreachable(); \
     } while (0)
 #endif
 #else
-#define TB_ASSUME(x)                                                                               \
-    do {                                                                                           \
-        if (!(x))                                                                                  \
-            __builtin_unreachable();                                                               \
+#define TB_ASSUME(x)                 \
+    do                               \
+    {                                \
+        if (!(x))                    \
+            __builtin_unreachable(); \
     } while (0)
 #endif
 #elif defined(__GNUC__)
 #if (__GNUC__ >= 13) || (defined(__has_builtin) && __has_builtin(__builtin_assume))
 #define TB_ASSUME(x) __builtin_assume(x)
 #else
-#define TB_ASSUME(x)                                                                               \
-    do {                                                                                           \
-        if (!(x))                                                                                  \
-            __builtin_unreachable();                                                               \
+#define TB_ASSUME(x)                 \
+    do                               \
+    {                                \
+        if (!(x))                    \
+            __builtin_unreachable(); \
     } while (0)
 #endif
 #else

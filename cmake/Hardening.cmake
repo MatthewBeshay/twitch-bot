@@ -1,13 +1,9 @@
 # cmake/Hardening.cmake
 
 include_guard(GLOBAL)
-include(CheckCXXCompilerFlag)
 
-# Usage:
-#   project_enable_hardening(<target> [UBSAN_MINIMAL_RUNTIME])
-#
-# The flags are chosen to be safe for general use. They are attached with
-# PRIVATE scope so they do not leak to dependants.
+include(CheckCXXCompilerFlag)
+include(CheckLinkerFlag)
 
 function(project_enable_hardening target)
   if(NOT TARGET "${target}")
@@ -32,41 +28,60 @@ function(project_enable_hardening target)
   set(_ld_opts "")
   set(_cxx_defs "")
 
+  function(_append_cxx_if_ok _flag _out)
+    string(MAKE_C_IDENTIFIER "HAVE_${_flag}" _var)
+    check_cxx_compiler_flag("${_flag}" ${_var})
+    if(${_var})
+      set(${_out}
+          ${${_out}} "${_flag}"
+          PARENT_SCOPE)
+    endif()
+  endfunction()
+
+  function(_append_ld_if_ok _flag _out)
+    string(MAKE_C_IDENTIFIER "HAVE_LD_${_flag}" _var)
+    check_linker_flag(CXX "${_flag}" ${_var})
+    if(${_var})
+      set(${_out}
+          ${${_out}} "${_flag}"
+          PARENT_SCOPE)
+    endif()
+  endfunction()
+
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     list(APPEND _cxx_opts /sdl)
-    list(
-      APPEND
-      _ld_opts
-      /NXCOMPAT
-      /CETCOMPAT)
-    # /guard:cf and /DYNAMICBASE are linker options on MSVC
-    list(
-      APPEND
-      _ld_opts
-      /guard:cf
-      /DYNAMICBASE)
+
+    _append_cxx_if_ok("/Qspectre" _cxx_opts)
+
+    _append_ld_if_ok("/guard:cf" _ld_opts)
+    _append_ld_if_ok("/DYNAMICBASE" _ld_opts)
+    _append_ld_if_ok("/NXCOMPAT" _ld_opts)
+    _append_ld_if_ok("/CETCOMPAT" _ld_opts)
+    _append_ld_if_ok("/HIGHENTROPYVA" _ld_opts)
+
   else()
-    list(APPEND _cxx_defs -D_GLIBCXX_ASSERTIONS)
+    list(APPEND _cxx_defs _GLIBCXX_ASSERTIONS)
 
-    check_cxx_compiler_flag(-fstack-protector-strong HAS_STACK_PROTECTOR)
-    if(HAS_STACK_PROTECTOR)
-      list(APPEND _cxx_opts -fstack-protector-strong)
+    _append_cxx_if_ok("-fstack-protector-strong" _cxx_opts)
+
+    _append_cxx_if_ok("-fcf-protection" _cxx_opts)
+
+    if(UNIX)
+      _append_cxx_if_ok("-fstack-clash-protection" _cxx_opts)
     endif()
 
-    check_cxx_compiler_flag(-fcf-protection HAS_CF_PROTECTION)
-    if(HAS_CF_PROTECTION)
-      list(APPEND _cxx_opts -fcf-protection)
+    _append_cxx_if_ok("-U_FORTIFY_SOURCE" _cxx_opts)
+    _append_cxx_if_ok("-D_FORTIFY_SOURCE=3" _cxx_opts)
+
+    if(_type STREQUAL "EXECUTABLE")
+      _append_cxx_if_ok("-fPIE" _cxx_opts)
+      _append_ld_if_ok("-pie" _ld_opts)
     endif()
 
-    check_cxx_compiler_flag(-fstack-clash-protection HAS_STACK_CLASH)
-    if(HAS_STACK_CLASH)
-      if(UNIX)
-        list(APPEND _cxx_opts -fstack-clash-protection)
-      endif()
-    endif()
-
-    list(APPEND _cxx_opts $<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>)
-    list(APPEND _cxx_opts $<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>)
+    _append_ld_if_ok("-Wl,-z,relro" _ld_opts)
+    _append_ld_if_ok("-Wl,-z,now" _ld_opts)
+    _append_ld_if_ok("-Wl,-z,noexecstack" _ld_opts)
+    _append_ld_if_ok("-Wl,--as-needed" _ld_opts)
   endif()
 
   if(HARDEN_UBSAN_MINIMAL_RUNTIME
@@ -74,8 +89,9 @@ function(project_enable_hardening target)
          CMAKE_CXX_COMPILER_FRONTEND_VARIANT
          STREQUAL
          "MSVC")
-    check_cxx_compiler_flag("-fsanitize=undefined -fsanitize-minimal-runtime" HAS_UBSAN_MIN)
-    if(HAS_UBSAN_MIN)
+    check_cxx_compiler_flag("-fsanitize=undefined -fsanitize-minimal-runtime -fno-sanitize-recover=undefined"
+                            HAVE_UBSAN_MIN)
+    if(HAVE_UBSAN_MIN)
       list(
         APPEND
         _cxx_opts
@@ -93,12 +109,19 @@ function(project_enable_hardening target)
     endif()
   endif()
 
+  set(_cxx_opts_dbg "")
+  set(_cxx_opts_rel "")
+  foreach(f IN LISTS _cxx_opts)
+    list(APPEND _cxx_opts_rel "$<$<NOT:$<CONFIG:Debug>>:${f}>")
+  endforeach()
+
   if(_cxx_defs)
     target_compile_definitions(${target} PRIVATE ${_cxx_defs})
   endif()
-  if(_cxx_opts)
-    target_compile_options(${target} PRIVATE ${_cxx_opts})
+  if(_cxx_opts_rel)
+    target_compile_options(${target} PRIVATE ${_cxx_opts_rel})
   endif()
+
   if(_ld_opts)
     target_link_options(${target} PRIVATE ${_ld_opts})
   endif()

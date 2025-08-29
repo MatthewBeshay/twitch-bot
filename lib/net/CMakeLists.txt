@@ -4,6 +4,9 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 add_library(tb_net STATIC)
+add_library(tb::net ALIAS tb_net)
+
+set_target_properties(tb_net PROPERTIES EXPORT_NAME net)
 
 set(NET_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/tb/net/http/chunked_encoding.hpp
@@ -42,11 +45,13 @@ target_include_directories(tb_net
 
 target_compile_features(tb_net PUBLIC cxx_std_23)
 
-find_package(Boost CONFIG REQUIRED COMPONENTS asio beast)
 find_package(OpenSSL REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(glaze CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
+
+find_package(boost_asio  CONFIG REQUIRED)
+find_package(boost_beast CONFIG REQUIRED)
 
 target_link_libraries(tb_net PUBLIC
   tb_utils
@@ -61,6 +66,7 @@ target_link_libraries(tb_net PUBLIC
 
 find_package(Brotli QUIET)
 if(Brotli_FOUND)
+  target_link_libraries(tb_net PUBLIC Brotli::brotlidec)
 else()
   find_package(unofficial-brotli CONFIG REQUIRED)
   if(TARGET unofficial::brotli::brotlidec AND NOT TARGET Brotli::brotlidec)
@@ -68,24 +74,20 @@ else()
     set_property(TARGET Brotli::brotlidec PROPERTY
       INTERFACE_LINK_LIBRARIES unofficial::brotli::brotlidec)
   endif()
+  target_link_libraries(tb_net PUBLIC Brotli::brotlidec)
 endif()
 
-target_link_libraries(tb_net PUBLIC Brotli::brotlidec)
-
-if (WIN32)
+if(WIN32)
   target_link_libraries(tb_net PUBLIC ws2_32)
 endif()
-
-add_library(tb::net ALIAS tb_net)
 
 install(
   TARGETS tb_net
   EXPORT tb_netTargets
   FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 install(
@@ -95,13 +97,14 @@ install(
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_net
 )
 
-configure_package_config_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tb_netConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfig.cmake
-  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_net
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
 )
 
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/tb_netConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_net
 )

@@ -1,42 +1,53 @@
 {
   "version": 5,
-  "cmakeMinimumRequired": { "major": 4, "minor": 0, "patch": 0 },
-
   "configurePresets": [
     {
-      "name": "common",
+      "name": "base-common",
       "hidden": true,
-      "description": "Shared settings for every toolchain",
+      "description": "Shared settings for every toolchain (portable)",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "installDir": "${sourceDir}/out/install/${presetName}",
-      "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": { "type": "BOOL", "value": true },
 
-        "CMAKE_CXX_STANDARD": "23",
-        "CMAKE_CXX_EXTENSIONS": "OFF",
+        "CMAKE_CXX_STANDARD":         { "type": "STRING", "value": "23" },
+        "CMAKE_CXX_EXTENSIONS":       { "type": "BOOL",   "value": false },
 
-        "WARNINGS_AS_ERRORS": "ON",
+        "WARNINGS_AS_ERRORS":         { "type": "BOOL",   "value": true },
 
-        "ENABLE_SANITISERS": "ON",
-        "SANITISE_ADDRESS": "ON",
+        "ENABLE_SANITISERS":          { "type": "BOOL",   "value": true },
+        "SANITISE_ADDRESS":           { "type": "BOOL",   "value": true },
 
-        "ENABLE_CLANG_TIDY": "OFF",
-        "ENABLE_CPPCHECK": "OFF",
-        "ENABLE_IWYU": "OFF",
+        "ENABLE_CPPCHECK":            { "type": "BOOL",   "value": false },
+        "ENABLE_IWYU":                { "type": "BOOL",   "value": false },
 
-        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL"
+        "CMAKE_MSVC_RUNTIME_LIBRARY": { "type": "STRING", "value": "MultiThreadedDLL" }
       }
     },
 
     {
       "name": "windows-msbuild-base",
       "hidden": true,
-      "inherits": "common",
+      "inherits": "base-common",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "architecture": { "value": "x64", "strategy": "set" },
-      "toolset": { "value": "host=x64", "strategy": "set" }
+      "toolset": { "value": "host=x64", "strategy": "set" },
+      "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": { "type": "STRING", "value": "x64-windows" }
+      }
+    },
+
+    {
+      "name": "windows-ninja-base",
+      "hidden": true,
+      "inherits": "base-common",
+      "generator": "Ninja",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "toolchainFile": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": { "type": "STRING", "value": "x64-windows" }
+      }
     },
 
     {
@@ -48,8 +59,8 @@
         "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-msvc-x64" }
       },
       "cacheVariables": {
-        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE": "ON",
-        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO": "ON"
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE":        { "type": "BOOL", "value": true },
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO": { "type": "BOOL", "value": true }
       }
     },
 
@@ -63,21 +74,21 @@
         "microsoft.com/VisualStudioSettings/CMake/1.0": { "intelliSenseMode": "windows-clang-x64" }
       },
       "cacheVariables": {
-        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE": "ON",
-        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO": "ON"
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE":        { "type": "BOOL", "value": true },
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO": { "type": "BOOL", "value": true }
       }
     },
 
     {
       "name": "ninja-clang",
       "displayName": "Ninja - ClangCL (Debug)",
-      "inherits": "common",
-      "generator": "Ninja",
+      "inherits": "windows-ninja-base",
       "environment": { "CLANG_ROOT": "C:/Program Files/LLVM" },
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "$env{CLANG_ROOT}/bin/clang-cl.exe",
-        "CMAKE_CXX_COMPILER": "$env{CLANG_ROOT}/bin/clang-cl.exe",
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_C_COMPILER":  { "type": "STRING", "value": "$env{CLANG_ROOT}/bin/clang-cl.exe" },
+        "CMAKE_CXX_COMPILER":{ "type": "STRING", "value": "$env{CLANG_ROOT}/bin/clang-cl.exe" },
+        "CMAKE_LINKER":      { "type": "STRING", "value": "$env{CLANG_ROOT}/bin/lld-link.exe" },
+        "CMAKE_BUILD_TYPE":  { "type": "STRING", "value": "Debug" }
       }
     },
     {
@@ -85,7 +96,8 @@
       "displayName": "Ninja - ClangCL (RelWithDebInfo)",
       "inherits": "ninja-clang",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+        "CMAKE_BUILD_TYPE": { "type": "STRING", "value": "RelWithDebInfo" },
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": { "type": "BOOL", "value": true }
       }
     },
     {
@@ -93,16 +105,65 @@
       "displayName": "Ninja - ClangCL (Release)",
       "inherits": "ninja-clang",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": { "type": "STRING", "value": "Release" },
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": { "type": "BOOL", "value": true }
       }
     },
 
     {
-      "name": "ninja-clang-tidy",
-      "displayName": "Ninja - clang-tidy (Debug)",
-      "inherits": "ninja-clang",
+      "name": "dev-mode",
+      "hidden": true,
       "cacheVariables": {
-        "ENABLE_CLANG_TIDY": "ON"
+        "TWITCHBOT_DEVELOPER_MODE": { "type": "BOOL", "value": true }
+      }
+    },
+    {
+      "name": "clang-tidy",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_CXX_CLANG_TIDY": "clang-tidy;--header-filter=^${sourceDir}/"
+      }
+    },
+    {
+      "name": "cppcheck",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_CXX_CPPCHECK": "cppcheck;--inline-suppr"
+      }
+    },
+
+    {
+      "name": "ci-linux",
+      "hidden": true,
+      "inherits": "base-common",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": { "type": "STRING", "value": "Release" },
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": { "type": "BOOL", "value": true }
+      }
+    },
+    {
+      "name": "ci-darwin",
+      "hidden": true,
+      "inherits": "base-common",
+      "generator": "Xcode"
+    },
+    {
+      "name": "ci-win64",
+      "hidden": true,
+      "inherits": "vs2022-msvc"
+    },
+    {
+      "name": "coverage-linux",
+      "hidden": true,
+      "inherits": "ci-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": { "type": "STRING", "value": "Coverage" },
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": { "type": "BOOL", "value": false },
+        "ENABLE_COVERAGE": { "type": "BOOL", "value": true },
+        "CMAKE_CXX_FLAGS_COVERAGE": "-Og -g --coverage -fkeep-inline-functions -fkeep-static-functions",
+        "CMAKE_EXE_LINKER_FLAGS_COVERAGE": "--coverage",
+        "CMAKE_SHARED_LINKER_FLAGS_COVERAGE": "--coverage"
       }
     }
   ],
@@ -118,20 +179,6 @@
 
     { "name": "clangcl-ninja-debug",   "configurePreset": "ninja-clang" },
     { "name": "clangcl-ninja-relwithdebinfo", "configurePreset": "ninja-clang-relwithdebinfo" },
-    { "name": "clangcl-ninja-release", "configurePreset": "ninja-clang-release" },
-
-    { "name": "ninja-clang-tidy",      "configurePreset": "ninja-clang-tidy",   "targets": [ "all" ] }
-  ],
-
-  "testPresets": [
-    {
-      "name": "tests-common",
-      "hidden": true,
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error", "stopOnFailure": true }
-    },
-    { "name": "tests-msvc-debug", "inherits": "tests-common", "configurePreset": "vs2022-msvc", "configuration": "Debug" },
-    { "name": "tests-msvc-relwithdebinfo", "inherits": "tests-common", "configurePreset": "vs2022-msvc", "configuration": "RelWithDebInfo" },
-    { "name": "tests-clangcl-ninja-debug", "inherits": "tests-common", "configurePreset": "ninja-clang" }
+    { "name": "clangcl-ninja-release", "configurePreset": "ninja-clang-release" }
   ]
 }

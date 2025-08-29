@@ -18,6 +18,17 @@ function(project_set_warnings target)
   endif()
 
   set(_scope PRIVATE)
+  if(ARGC GREATER 1)
+    cmake_parse_arguments(
+      _PW
+      " "
+      "SCOPE"
+      ""
+      ${ARGN})
+    if(DEFINED _PW_SCOPE)
+      set(_scope "${_PW_SCOPE}")
+    endif()
+  endif()
 
   if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     target_compile_options(
@@ -30,8 +41,23 @@ function(project_set_warnings target)
       /EHsc
       /bigobj
       /diagnostics:column
+      /external:W0
+      /external:anglebrackets
       $<$<AND:$<BOOL:${WARNINGS_AS_ERRORS}>,$<CONFIG:Debug>>:/WX>)
   else()
+    set(WARNINGS_C
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wshadow
+        -Wstrict-prototypes
+        -Wmissing-prototypes
+        -Wpointer-arith
+        -Wwrite-strings
+        -Wformat=2
+        -Wcast-align
+        -Wundef)
+
     set(WARNINGS_CXX
         -Wall
         -Wextra
@@ -46,7 +72,8 @@ function(project_set_warnings target)
         -Wnull-dereference
         -Wdouble-promotion
         -Wformat=2
-        -Wimplicit-fallthrough)
+        -Wimplicit-fallthrough
+        -Wundef)
 
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
       list(
@@ -65,6 +92,7 @@ function(project_set_warnings target)
     target_compile_options(
       ${target}
       ${_scope}
+      $<$<COMPILE_LANGUAGE:C>:${WARNINGS_C}>
       $<$<COMPILE_LANGUAGE:CXX>:${WARNINGS_CXX}>
       $<$<AND:$<BOOL:${WARNINGS_AS_ERRORS}>,$<CONFIG:Debug>>:-Werror>)
   endif()

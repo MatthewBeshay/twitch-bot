@@ -7,11 +7,12 @@
 #include <app/app_channel_store.hpp>
 #include <app/integrations.hpp>
 
-namespace app {
+namespace app
+{
 
-// Register app-layer commands that use Integrations and per-channel app state.
-void register_integrations(twitch_bot::TwitchBot& bot,
-                           const app::Integrations& integrations,
-                           app::AppChannelStore& store);
+    // Register app-layer commands that use Integrations and per-channel app state.
+    void register_integrations(twitch_bot::TwitchBot& bot,
+                               const app::Integrations& integrations,
+                               app::AppChannelStore& store);
 
 } // namespace app

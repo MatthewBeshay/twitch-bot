@@ -5,6 +5,8 @@ include(CMakePackageConfigHelpers)
 add_library(tb_utils INTERFACE)
 add_library(tb::utils ALIAS tb_utils)
 
+set_target_properties(tb_utils PROPERTIES EXPORT_NAME utils)
+
 set(UTILS_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/tb/utils/attributes.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/tb/utils/timer.hpp
@@ -30,9 +32,9 @@ find_package(Microsoft.GSL CONFIG REQUIRED)
 target_link_libraries(tb_utils INTERFACE Microsoft.GSL::GSL)
 
 target_compile_definitions(tb_utils INTERFACE
-  _WIN32_WINNT=0x0A00
-  WIN32_LEAN_AND_MEAN
-  NOMINMAX
+  $<$<BOOL:${WIN32}>:_WIN32_WINNT=0x0A00>
+  $<$<BOOL:${WIN32}>:WIN32_LEAN_AND_MEAN>
+  $<$<BOOL:${WIN32}>:NOMINMAX>
 )
 
 install(TARGETS tb_utils
@@ -46,10 +48,10 @@ install(EXPORT tb_utilsTargets
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_utils
 )
 
-configure_package_config_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/tb_utilsConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/tb_utilsConfig.cmake
-  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tb_utils
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/tb_utilsConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
 )
 
 install(FILES

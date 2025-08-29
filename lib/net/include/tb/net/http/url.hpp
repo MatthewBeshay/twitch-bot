@@ -5,142 +5,169 @@
 #include <string_view>
 #include <utility>
 
-namespace tb::net {
-
-struct Url {
-    std::string scheme;
-    std::string host;
-    std::string port;
-    std::string path;
-    std::string query;
-
-    bool is_absolute() const noexcept
-    {
-        return !scheme.empty();
-    }
-
-    std::string authority() const
-    {
-        std::string out = host;
-        if (!port.empty()) {
-            out.push_back(':');
-            out += port;
-        }
-        return out;
-    }
-
-    std::string target() const
-    {
-        if (query.empty()) {
-            return path.empty() ? std::string{"/"} : path;
-        }
-        std::string out = path.empty() ? std::string{"/"} : path;
-        out += query;
-        return out;
-    }
-
-    std::string origin() const
-    {
-        std::string out = scheme;
-        out += "://";
-        out += authority();
-        return out;
-    }
-};
-
-inline Url parse_url(std::string_view s)
+namespace tb::net
 {
-    Url u;
 
-    auto pos = s.find("://");
-    if (pos != std::string_view::npos) {
-        u.scheme.assign(s.substr(0, pos));
-        s.remove_prefix(pos + 3);
-    }
+    struct Url
+    {
+        std::string scheme;
+        std::string host;
+        std::string port;
+        std::string path;
+        std::string query;
 
-    if (!u.scheme.empty()) {
-        auto slash = s.find('/');
-        std::string_view auth = (slash == std::string_view::npos) ? s : s.substr(0, slash);
-        if (slash == std::string_view::npos) {
-            s = "/";
-        } else {
-            s.remove_prefix(slash);
+        bool is_absolute() const noexcept
+        {
+            return !scheme.empty();
         }
 
-        auto colon = auth.rfind(':');
-        if (colon != std::string_view::npos) {
-            u.host.assign(auth.substr(0, colon));
-            u.port.assign(auth.substr(colon + 1));
-        } else {
-            u.host.assign(auth);
+        std::string authority() const
+        {
+            std::string out = host;
+            if (!port.empty())
+            {
+                out.push_back(':');
+                out += port;
+            }
+            return out;
         }
+
+        std::string target() const
+        {
+            if (query.empty())
+            {
+                return path.empty() ? std::string{ "/" } : path;
+            }
+            std::string out = path.empty() ? std::string{ "/" } : path;
+            out += query;
+            return out;
+        }
+
+        std::string origin() const
+        {
+            std::string out = scheme;
+            out += "://";
+            out += authority();
+            return out;
+        }
+    };
+
+    inline Url parse_url(std::string_view s)
+    {
+        Url u;
+
+        auto pos = s.find("://");
+        if (pos != std::string_view::npos)
+        {
+            u.scheme.assign(s.substr(0, pos));
+            s.remove_prefix(pos + 3);
+        }
+
+        if (!u.scheme.empty())
+        {
+            auto slash = s.find('/');
+            std::string_view auth = (slash == std::string_view::npos) ? s : s.substr(0, slash);
+            if (slash == std::string_view::npos)
+            {
+                s = "/";
+            }
+            else
+            {
+                s.remove_prefix(slash);
+            }
+
+            auto colon = auth.rfind(':');
+            if (colon != std::string_view::npos)
+            {
+                u.host.assign(auth.substr(0, colon));
+                u.port.assign(auth.substr(colon + 1));
+            }
+            else
+            {
+                u.host.assign(auth);
+            }
+        }
+
+        auto q = s.find('?');
+        if (q == std::string_view::npos)
+        {
+            u.path.assign(s.empty() ? "/" : std::string(s));
+        }
+        else
+        {
+            u.path.assign(std::string(s.substr(0, q)));
+            u.query.assign(std::string(s.substr(q)));
+        }
+
+        if (u.path.empty() || u.path.front() != '/')
+            u.path.insert(u.path.begin(), '/');
+        return u;
     }
 
-    auto q = s.find('?');
-    if (q == std::string_view::npos) {
-        u.path.assign(s.empty() ? "/" : std::string(s));
-    } else {
-        u.path.assign(std::string(s.substr(0, q)));
-        u.query.assign(std::string(s.substr(q)));
-    }
+    inline Url resolve_url(const Url& base, std::string_view location)
+    {
+        if (location.find("://") != std::string_view::npos)
+        {
+            return parse_url(location);
+        }
 
-    if (u.path.empty() || u.path.front() != '/')
-        u.path.insert(u.path.begin(), '/');
-    return u;
-}
+        if (location.rfind("//", 0) == 0)
+        {
+            Url out = parse_url(std::string(base.scheme) + ":" + std::string(location));
+            return out;
+        }
 
-inline Url resolve_url(const Url& base, std::string_view location)
-{
-    if (location.find("://") != std::string_view::npos) {
-        return parse_url(location);
-    }
+        Url out = base;
+        if (!location.empty() && location.front() == '/')
+        {
+            out.path.assign(location.begin(), location.end());
+            out.query.clear();
+            return out;
+        }
 
-    if (location.rfind("//", 0) == 0) {
-        Url out = parse_url(std::string(base.scheme) + ":" + std::string(location));
-        return out;
-    }
+        auto last_slash = out.path.rfind('/');
+        if (last_slash == std::string::npos)
+        {
+            out.path = "/";
+        }
+        else
+        {
+            out.path.resize(last_slash + 1);
+        }
 
-    Url out = base;
-    if (!location.empty() && location.front() == '/') {
-        out.path.assign(location.begin(), location.end());
+        out.path.append(location);
+
+        for (;;)
+        {
+            auto i = out.path.find("/./");
+            if (i == std::string::npos)
+            {
+                break;
+            }
+            out.path.erase(i, 2);
+        }
+        for (;;)
+        {
+            auto i = out.path.find("/../");
+            if (i == std::string::npos)
+            {
+                break;
+            }
+            auto j = out.path.rfind('/', i - 1);
+            if (j == std::string::npos)
+            {
+                out.path.erase(0, i + 3);
+                break;
+            }
+            out.path.erase(j, i + 3 - j);
+        }
+
+        if (out.path.empty() || out.path.front() != '/')
+        {
+            out.path.insert(out.path.begin(), '/');
+        }
         out.query.clear();
         return out;
     }
-
-    auto last_slash = out.path.rfind('/');
-    if (last_slash == std::string::npos) {
-        out.path = "/";
-    } else {
-        out.path.resize(last_slash + 1);
-    }
-
-    out.path.append(location);
-
-    for (;;) {
-        auto i = out.path.find("/./");
-        if (i == std::string::npos) {
-            break;
-        }
-        out.path.erase(i, 2);
-    }
-    for (;;) {
-        auto i = out.path.find("/../");
-        if (i == std::string::npos) {
-            break;
-        }
-        auto j = out.path.rfind('/', i - 1);
-        if (j == std::string::npos) {
-            out.path.erase(0, i + 3);
-            break;
-        }
-        out.path.erase(j, i + 3 - j);
-    }
-
-    if (out.path.empty() || out.path.front() != '/') {
-        out.path.insert(out.path.begin(), '/');
-    }
-    out.query.clear();
-    return out;
-}
 
 } // namespace tb::net
