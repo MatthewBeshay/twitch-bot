@@ -1,3 +1,24 @@
+/*
+Module: channel_store.cpp
+
+Purpose:
+- Persist and serve a thread-safe set of Twitch channels plus small per-channel
+  metadata (currently just an optional alias). I/O is debounced and serialized.
+
+Why:
+- The bot needs a durable list of channels to auto-join across restarts, and
+  handlers may mutate this set concurrently. A shared_mutex protects the map,
+  while a strand and a timer coalesce writes to reduce disk churn.
+
+Notes:
+- Channel keys are Normalised to lowercase (ASCII) to match Twitch semantics.
+- Saving is best-effort: write to a temporary file then atomically rename.
+- The destructor drains the strand to avoid dangling async work on teardown.
+- TOML on-disk shape:
+      [<channel-lowercase>]
+      alias = "optional nice name"
+*/
+
 // C++ Standard Library
 #include <fstream>
 #include <future>
@@ -10,6 +31,7 @@
 
 namespace
 {
+    // Write-back debounce interval.
     inline constexpr std::chrono::seconds kSaveDelay{ 5 };
 } // namespace
 
@@ -77,7 +99,7 @@ namespace app
                     info.alias = alias_node->value<std::string>();
                 }
 
-                // Normalize channel to lowercase on load.
+                // Normalise channel to lowercase on load.
                 channel_data_.emplace(std::piecewise_construct,
                                       std::forward_as_tuple(to_lower_ascii(key.str())),
                                       std::forward_as_tuple(std::move(info)));
@@ -87,6 +109,7 @@ namespace app
 
     void ChannelStore::save() const noexcept
     {
+        // Mark dirty and debounce a single write on the strand.
         dirty_.store(true, std::memory_order_relaxed);
 
         bool expected = false;
@@ -107,6 +130,7 @@ namespace app
     {
         toml::table tbl = build_table();
 
+        // Atomic write: write to temp then rename into place.
         const auto tmp = filename_.string() + ".tmp";
         {
             std::ofstream out{ tmp, std::ios::trunc | std::ios::binary };

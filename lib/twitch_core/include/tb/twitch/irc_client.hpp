@@ -1,3 +1,17 @@
+/*
+Module Name:
+- irc_client.hpp
+
+Abstract:
+- TLS WebSocket client for Twitch IRC.
+- Designed for hot paths: avoids copies in read_loop and enforces UTF-8 safe write splitting.
+- All calls must run on the ws_stream_ strand to prevent races. This keeps lifetime and ordering simple.
+
+Why:
+- Twitch limits messages to 500 bytes. We split on code point boundaries and prefer word edges to reduce spammy fragments.
+- We keep a small line_tail_ to join frames that do not end with CRLF, so handlers only ever see complete lines.
+- Best-effort send APIs trade strict erroring for resilience. On failure we close proactively to avoid half-dead sockets.
+*/
 #pragma once
 
 // Twitch IRC client over WebSocket and TLS.
@@ -29,7 +43,7 @@
 #include <boost/beast/websocket/ssl.hpp>
 #include <boost/beast/websocket/stream.hpp>
 
-// Project
+// Core
 #include <tb/utils/attributes.hpp>
 
 namespace twitch_bot
@@ -42,103 +56,91 @@ namespace twitch_bot
     {
     public:
         /// Construct a client bound to the given executor and SSL context.
-        /// @param executor - Asio executor used for all async work.
-        /// @param ssl_context - OpenSSL context already configured by the caller.
-        /// @param access_token - Twitch OAuth token, prefixed with "oauth:".
-        /// @param control_channel - Bot login name, also used as NICK.
+        /// access_token must be "oauth:...". control_channel is also used as NICK.
         explicit IrcClient(boost::asio::any_io_executor executor,
                            boost::asio::ssl::context& ssl_context,
                            std::string_view access_token,
                            std::string_view control_channel);
 
-        /// Destructor - best-effort wipe of the OAuth token.
-        /// Does not implicitly close the socket. Ensure coroutines have finished or call close().
+        /// Destructor wipes the OAuth token best-effort.
+        /// Rationale: avoid lingering secrets in memory longer than needed.
         ~IrcClient() noexcept;
 
-        // Not copyable - owns a websocket stream and timer bound to an executor.
         IrcClient(const IrcClient&) = delete;
         IrcClient& operator=(const IrcClient&) = delete;
 
-        // Movable - transfers stream and timer ownership. Marked noexcept for perf.
+        // Movable to transfer ownership of stream and timers without reallocating buffers.
         IrcClient(IrcClient&&) noexcept = default;
         IrcClient& operator=(IrcClient&&) noexcept = default;
 
         /// Resolve, connect, perform TLS and WS handshakes, authenticate, and join channels.
-        /// Preconditions: each channel name has no leading '#'.
-        /// Throws on failure. On success, the connection is ready for reads and writes.
+        /// Pre: channel names do not include '#'.
         [[nodiscard]] auto connect(std::span<const std::string_view> channels)
             -> boost::asio::awaitable<void>;
 
-        /// Send a single IRC line. CRLF is appended automatically.
-        /// No-throw. Best-effort: on failure, the connection is closed.
+        /// Send one IRC line, CRLF appended internally.
+        /// No-throw: on failure the connection is closed. Keeps caller code simple under failure.
         [[nodiscard]] auto send_line(std::string_view message) noexcept -> boost::asio::awaitable<void>;
 
         /// Join or part a single channel. Channel name must not include '#'.
-        /// No-throw. Best-effort: on failure, the connection is closed.
+        /// No-throw. Closes on failure to avoid a wedged session.
         [[nodiscard]] auto join(std::string_view channel) noexcept -> boost::asio::awaitable<void>;
         [[nodiscard]] auto part(std::string_view channel) noexcept -> boost::asio::awaitable<void>;
 
-        /// Write pre-built buffers as one text frame.
-        /// No-throw. Best-effort: on failure, the connection is closed.
+        /// Write pre-built buffers as a single text frame.
+        /// No-throw. Closes on failure.
         [[nodiscard]] auto send_buffers(std::span<const boost::asio::const_buffer> buffers) noexcept
             -> boost::asio::awaitable<void>;
 
         /// Send a PRIVMSG to a channel. Channel must not include '#'.
-        /// No-throw. Best-effort.
+        /// No-throw. Uses the same backpressure gate as other writes.
         [[nodiscard]] auto privmsg(std::string_view channel, std::string_view text) noexcept
             -> boost::asio::awaitable<void>;
 
-        /// Send a threaded reply using IRCv3 tags.
-        /// If parent_msg_id is empty, falls back to PRIVMSG.
-        /// No-throw. Best-effort.
+        /// Send a threaded reply using IRCv3 tags. Falls back to PRIVMSG when parent_msg_id is empty.
         [[nodiscard]] auto reply(std::string_view channel,
                                  std::string_view parent_msg_id,
                                  std::string_view text) noexcept -> boost::asio::awaitable<void>;
 
-        /// Send long text split into multiple PRIVMSGs.
-        /// Behaviour: UTF-8 safe, up to 500 bytes per chunk. CR or LF are normalised to space.
-        /// No-throw. Allocation free.
+        /// Long text split into multiple PRIVMSGs.
+        /// Why: Twitch enforces a 500 byte cap. Splitting respects UTF-8 and tries word boundaries first.
         [[nodiscard]] auto privmsg_wrap(std::string_view channel, std::string_view text) noexcept
             -> boost::asio::awaitable<void>;
 
-        /// Send long text as threaded replies, all replying to the same parent.
-        /// Behaviour: UTF-8 safe, 500 byte chunks. CR or LF are normalised to space.
-        /// No-throw. Allocation free.
+        /// Long text split into threaded replies to the same parent.
         [[nodiscard]] auto reply_wrap(std::string_view channel,
                                       std::string_view parent_msg_id,
                                       std::string_view text) noexcept -> boost::asio::awaitable<void>;
 
         /// Read frames, split on CRLF, and invoke handler for each complete line.
-        /// Handler contract: void(std::string_view line)
-        /// Ownership: the view points into internal buffers and is valid only during the call.
-        /// Errors: may throw if the WS read fails or the connection closes with error.
+        /// Handler is given a view into internal buffers for zero-copy. Do not retain the view.
+        /// Throws on read errors. Keeps lines whole so downstream parsers do not handle partials.
         template<typename Handler>
         [[nodiscard]] auto read_loop(Handler handler) -> boost::asio::awaitable<void>;
 
         /// Issue PING every four minutes until cancelled or closed.
-        /// Returns when the timer is cancelled or the connection is closed.
+        /// Why: keeps idle connections alive and detects stalls.
         [[nodiscard]] auto ping_loop() -> boost::asio::awaitable<void, boost::asio::any_io_executor>;
 
-        /// Cancel timers and start a clean WebSocket close.
-        /// No-throw. Idempotent.
+        /// Cancel timers and start a clean WebSocket close. Idempotent.
         void close() noexcept;
 
-        /// Replace the OAuth token. May allocate.
+        /// Replace the OAuth token.
         void set_access_token(std::string_view token)
         {
             access_token_ = token;
         }
 
     private:
-        static constexpr std::size_t k_read_buffer_size = 64ULL * 1024ULL; // bytes
+        static constexpr std::size_t k_read_buffer_size = 64ULL * 1024ULL; // small and cache friendly
         static constexpr std::string_view kCRLF{ "\r\n" };
         static constexpr std::size_t kMaxChatBytes = 500; // Twitch hard limit
 
         [[nodiscard]] static std::size_t utf8_clip_len(std::string_view s,
                                                        std::size_t max_bytes) noexcept;
 
-        /// Choose a chunk end less than or equal to max_bytes, preferring the last ASCII space
-        /// or line break within the window. Falls back to code point boundary.
+        /// Choose a chunk end under max_bytes, prefer last ASCII space or line break.
+        /// Falls back to code point boundary to avoid breaking UTF-8.
         [[nodiscard]] static std::size_t
         utf8_chunk_by_words(std::string_view s, std::size_t start, std::size_t max_bytes) noexcept;
 
@@ -150,12 +152,13 @@ namespace twitch_bot
         boost::asio::steady_timer ping_timer_;
         boost::beast::flat_static_buffer<k_read_buffer_size> read_buffer_;
 
-        // Carries a partial line that ended without CRLF in the previous read.
+        // Carries a partial line between reads so handlers only see complete lines.
         std::string line_tail_;
 
         std::string access_token_;
         std::string control_channel_;
 
+        // Serialise writes to avoid interleaving frames from multiple coroutines.
         boost::asio::steady_timer write_gate_;
         bool write_inflight_ = false;
     };
@@ -170,7 +173,7 @@ namespace twitch_bot
         {
             co_await ws_stream_.async_read(read_buffer_, boost::asio::use_awaitable);
 
-            // Treat Beast DynamicBuffer as a sequence per the contract.
+            // Use the DynamicBuffer as a single contiguous view when possible.
             auto const bs = read_buffer_.cdata();
             auto const total = boost::asio::buffer_size(bs);
             if (TB_UNLIKELY(total == 0))
@@ -184,7 +187,7 @@ namespace twitch_bot
 
             if (line_tail_.empty())
             {
-                // Zero-copy path. The handler must not retain the view.
+                // Zero-copy path: emit lines directly from the current buffer slice.
                 std::size_t begin = 0;
                 for (;;)
                 {
@@ -204,12 +207,12 @@ namespace twitch_bot
                     }
                     else if (r + 1 == chunk.size())
                     {
-                        // CR at end of chunk - carry the remainder to line_tail_
+                        // CR at end - save for the next frame so we only emit complete lines.
                         break;
                     }
                     else
                     {
-                        // Isolated CR inside the chunk - treat as data and keep scanning
+                        // Isolated CR - treat as data.
                         begin = r + 1;
                     }
                 }
@@ -220,7 +223,7 @@ namespace twitch_bot
             }
             else
             {
-                // Accumulate into tail, then split on CRLF. Never emit a partial line.
+                // Join with carry-over so handlers never see partial lines.
                 line_tail_.reserve(line_tail_.size() + chunk.size());
                 line_tail_.append(chunk.data(), chunk.size());
 
@@ -252,7 +255,7 @@ namespace twitch_bot
                 }
             }
 
-            // Release exactly the bytes we just processed.
+            // Consume exactly what we inspected so the buffer does not grow unbounded.
             read_buffer_.consume(total);
         }
     }

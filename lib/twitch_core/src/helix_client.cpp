@@ -1,3 +1,17 @@
+/*
+Module Name:
+- helix_client.cpp
+
+Abstract:
+- Thin async wrapper over Twitch OAuth and Helix endpoints.
+- Manages a bearer token, validates or refreshes it, and fetches stream status.
+
+Why:
+- Keep OAuth state and retries on a strand so callers do not need to coordinate.
+- Validate before refresh to avoid unnecessary token churn.
+- Retry once on 401 to hide transient expiry from callers.
+*/
+
 // C++ Standard Library
 #include <array>
 #include <chrono>
@@ -15,7 +29,7 @@
 // GSL
 #include <gsl/gsl>
 
-// Project
+// Core
 #include <tb/net/http/http_client.hpp>
 #include <tb/twitch/helix_client.hpp>
 
@@ -25,16 +39,20 @@ namespace twitch_bot
     using json = glz::json_t;
 
     namespace
-    { // internal helpers and endpoints
-
-        inline int parse_digits(const char* p, int n) noexcept
+    {
+        // Tiny ASCII digit parser for fixed-width fields.
+        TB_FORCE_INLINE int parse_digits(const char* p, int n) noexcept
         {
             int v = 0;
             for (int i = 0; i < n; ++i)
+            {
                 v = v * 10 + (p[i] - '0');
+            }
             return v;
         }
 
+        // Civil date to days since Unix epoch.
+        // Source: well-known constant-time conversion. Keeps parsing allocation free.
         constexpr int64_t days_from_civil(int64_t y, unsigned m, unsigned d) noexcept
         {
             y -= (m <= 2);
@@ -45,14 +63,17 @@ namespace twitch_bot
             return era * 146097 + static_cast<int64_t>(doe) - 719468;
         }
 
-        // Parse "YYYY-MM-DDTHH:MM:SSZ" into UNIX epoch milliseconds.
-        inline std::optional<std::chrono::milliseconds> parse_iso8601_ms(std::string_view ts) noexcept
+        // Parse "YYYY-MM-DDTHH:MM:SSZ" into epoch milliseconds.
+        // Why: Helix returns ISO 8601 UTC without fractional seconds.
+        TB_FORCE_INLINE std::optional<std::chrono::milliseconds>
+        parse_iso8601_ms(std::string_view ts) noexcept
         {
             const char* p = ts.data();
             if (ts.size() != 20 || p[4] != '-' || p[7] != '-' || p[10] != 'T' || p[13] != ':' || p[16] != ':' || p[19] != 'Z')
             {
                 return std::nullopt;
             }
+
             const int y = parse_digits(p, 4);
             const unsigned mo = static_cast<unsigned>(parse_digits(p + 5, 2));
             const unsigned d = static_cast<unsigned>(parse_digits(p + 8, 2));
@@ -62,7 +83,6 @@ namespace twitch_bot
 
             const int64_t days = days_from_civil(y, mo, d);
             const int64_t secs = days * 86400 + static_cast<int64_t>(hh) * 3600 + static_cast<int64_t>(mm) * 60 + static_cast<int64_t>(ss);
-
             return std::chrono::milliseconds(secs * 1000);
         }
 
@@ -71,11 +91,13 @@ namespace twitch_bot
             std::string_view host, port, target;
         };
 
+        // Endpoints used by this client.
         constexpr EndPoint oauth_validate{ "id.twitch.tv", "443", "/oauth2/validate" };
         constexpr EndPoint access_token{ "id.twitch.tv", "443", "/oauth2/token" };
         constexpr EndPoint helix_streams{ "api.twitch.tv", "443", "/helix/streams?user_login=" };
 
-        // Percent-encode for application/x-www-form-urlencoded (no '+' for spaces).
+        // Percent-encode for application/x-www-form-urlencoded.
+        // Note: spaces are encoded as %20, not plus.
         std::string form_urlencode(std::string_view s)
         {
             static constexpr char hex[] = "0123456789ABCDEF";
@@ -85,7 +107,9 @@ namespace twitch_bot
             {
                 const bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
                 if (unreserved)
+                {
                     out.push_back(static_cast<char>(c));
+                }
                 else
                 {
                     out.push_back('%');
@@ -105,6 +129,7 @@ namespace twitch_bot
                              std::string_view refresh_token) :
         strand_{ executor }, token_expiry_{ std::chrono::steady_clock::now() }, executor_{ executor }, http_client_{ std::make_unique<http_client::client>(executor, ssl_ctx) }, client_id_{ client_id }, client_secret_{ client_secret }, refresh_token_value_(refresh_token)
     {
+        // No redirects and no cookies for OAuth and Helix JSON calls.
         http_client_->set_redirect_policy(
             tb::net::RedirectPolicy{ /*max_hops*/ 0, tb::net::RedirectMode::follow_none });
         http_client_->enable_cookies(false);
@@ -112,6 +137,7 @@ namespace twitch_bot
 
     HelixClient::~HelixClient() = default;
 
+    // Ensure we have a valid token. Validate fast path, then refresh if needed.
     auto HelixClient::ensure_valid_token() -> boost::asio::awaitable<void>
     {
         co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
@@ -132,11 +158,14 @@ namespace twitch_bot
         }
     }
 
+    // Hit /oauth2/validate to confirm the token and capture server expiry.
     auto HelixClient::validate_token() -> boost::asio::awaitable<bool>
     {
         co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
         if (token_.empty())
+        {
             co_return false;
+        }
 
         const std::string auth = "Bearer " + token_;
         std::array<http_client::http_header, 1> hdrs{ { { "Authorization", auth } } };
@@ -148,11 +177,12 @@ namespace twitch_bot
                 oauth_validate.host, oauth_validate.port, oauth_validate.target, headers);
 
             if (!res)
+            {
                 co_return false;
+            }
 
             const auto& j = res.value();
-            // Update expiry if provided by validate endpoint
-            const int expires_in_s = j["expires_in"].as<int>();
+            const int expires_in_s = j["expires_in"].as<int>(); // trust server view of expiry
             token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds{ expires_in_s };
             co_return true;
         }
@@ -167,6 +197,7 @@ namespace twitch_bot
         co_return co_await fetch_token(build_refresh_token_request_body());
     }
 
+    // Build application/x-www-form-urlencoded body with percent-encoding.
     auto HelixClient::build_refresh_token_request_body() const -> std::string
     {
         const std::string cid = form_urlencode(client_id_);
@@ -175,6 +206,7 @@ namespace twitch_bot
         return "client_id=" + cid + "&client_secret=" + csec + "&grant_type=refresh_token&refresh_token=" + rtok;
     }
 
+    // Exchange refresh token for an access token and update expiry.
     auto HelixClient::fetch_token(std::string body) -> boost::asio::awaitable<void>
     {
         co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
@@ -203,12 +235,13 @@ namespace twitch_bot
 
             if (persist_access_token_)
             {
+                // Persist is best effort so config stays in sync across runs.
                 try
                 {
                     persist_access_token_(token_);
                 }
                 catch (...)
-                { /* ignore */
+                {
                 }
             }
         }
@@ -218,6 +251,7 @@ namespace twitch_bot
         }
     }
 
+    // Read stream status for a channel. Validates or refreshes auth as needed.
     auto HelixClient::get_stream_status(std::string_view channel_id)
         -> boost::asio::awaitable<std::optional<StreamStatus>>
     {
@@ -227,7 +261,9 @@ namespace twitch_bot
         co_await ensure_valid_token();
 
         if (token_.empty())
+        {
             co_return std::nullopt;
+        }
 
         auto do_request = [&]() -> boost::asio::awaitable<std::optional<StreamStatus>> {
             std::string path;
@@ -242,23 +278,29 @@ namespace twitch_bot
             http_client::http_headers headers{ hdrs.data(), static_cast<std::size_t>(hdrs.size()) };
 
             auto res = co_await http_client_->get(helix_streams.host, helix_streams.port, path, headers);
-
             if (!res)
+            {
                 co_return std::nullopt;
+            }
 
             const auto& j = res.value();
 
             if (!j["data"].holds<json::array_t>())
+            {
                 co_return std::nullopt;
+            }
             auto data = j["data"].get<json::array_t>();
             if (data.empty())
+            {
                 co_return std::nullopt;
+            }
 
             auto started = data.front()["started_at"].get<std::string>();
             if (auto ms = parse_iso8601_ms(started))
             {
                 co_return StreamStatus{ true, *ms };
             }
+
             co_return std::nullopt;
         };
 
@@ -270,7 +312,7 @@ namespace twitch_bot
         }
         catch (std::runtime_error& e)
         {
-            error_msg = e.what();
+            error_msg = e.what(); // capture status text from HTTP client
         }
         catch (...)
         {
@@ -280,7 +322,7 @@ namespace twitch_bot
         if (status)
             co_return status;
 
-        // Retry once on auth failure: clear token and refresh.
+        // Retry once on likely auth failure.
         if (!error_msg.empty() && error_msg.find("401") != std::string::npos)
         {
             token_.clear();

@@ -1,3 +1,12 @@
+/*
+Module Name:
+- error.hpp
+
+Abstract:
+- Defines tb::net error codes and a std::error_category so callers can use
+  std::error_code with network helpers. Provides make_error_code and enables
+  implicit conversion via is_error_code_enum.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -14,6 +23,7 @@ namespace tb::net
         invalid_content_type,
     };
 
+    // Category for tb::net errors.
     struct error_category_impl final : std::error_category
     {
         const char* name() const noexcept override
@@ -48,7 +58,7 @@ namespace tb::net
 
 } // namespace tb::net
 
-// Enable implicit conversion to std::error_code
+// Enable implicit conversion to std::error_code for tb::net::errc.
 namespace std
 {
     template<>

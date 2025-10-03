@@ -1,3 +1,12 @@
+/*
+Module Name:
+- mime.hpp
+
+Abstract:
+- Minimal MIME media type model and helpers for HTTP clients.
+- media_type captures type/subtype plus optional charset.
+- is_json_like recognises application/json and +json suffix subtypes.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -32,11 +41,13 @@ namespace tb::net::mime
         {
             if (type == "application")
             {
+                if (subtype == "json")
                 {
-                    if (subtype == "json")
-                        return true;
+                    return true;
                 }
-                auto plus = subtype.rfind("+json");
+
+                // Accept suffix form like application/ld+json
+                const auto plus = subtype.rfind("+json");
                 if (plus != std::string::npos && plus + 5 == subtype.size())
                 {
                     return true;

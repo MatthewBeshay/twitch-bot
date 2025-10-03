@@ -1,6 +1,15 @@
+/*
+Module Name:
+- timer.hpp
+
+Abstract:
+- Monotonic stopwatch built on std::chrono::steady_clock.
+- Converts elapsed time to caller-specified durations via a constrained concept.
+- Uses a GSL postcondition to document the monotonic expectation.
+*/
 #pragma once
 
-// C++ Standard Library
+// C++ standard library
 #include <chrono>
 #include <concepts>
 #include <type_traits>
@@ -9,7 +18,7 @@
 #include <gsl/gsl>
 
 // D must be a std::chrono::duration (cv/ref-qualified types are accepted)
-template <class D>
+template<class D>
 concept ChronoDuration = requires {
     typename std::remove_cvref_t<D>::rep;
     typename std::remove_cvref_t<D>::period;
@@ -28,31 +37,27 @@ public:
         start_ = clock::now();
     }
 
-    // Elapsed time since construction or last reset
     [[nodiscard]] auto elapsed() const noexcept -> clock::duration
     {
         const auto d = clock::now() - start_;
-        Ensures(d >= clock::duration::zero()); // steady clocks are monotonic
+        Ensures(d >= clock::duration::zero()); // relies on monotonic clock
         return d;
     }
 
-    // Elapsed time converted to D; returns the raw count of D
-    template <ChronoDuration D>
+    template<ChronoDuration D>
     [[nodiscard]] auto elapsed_count() const noexcept -> typename std::remove_cvref_t<D>::rep
     {
         using DT = std::remove_cvref_t<D>;
         return std::chrono::duration_cast<DT>(elapsed()).count();
     }
 
-    // Elapsed time converted to D; returns a duration object of type D
-    template <ChronoDuration D>
+    template<ChronoDuration D>
     [[nodiscard]] auto elapsed_duration() const noexcept -> std::remove_cvref_t<D>
     {
         using DT = std::remove_cvref_t<D>;
         return std::chrono::duration_cast<DT>(elapsed());
     }
 
-    // Convenience: get elapsed and reset in one call
     [[nodiscard]] auto elapsed_and_reset() noexcept -> clock::duration
     {
         const auto d = elapsed();
@@ -61,5 +66,5 @@ public:
     }
 
 private:
-    clock::time_point start_ = clock::now(); // initialized on construction
+    clock::time_point start_ = clock::now(); // initialised on construction
 };

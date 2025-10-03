@@ -1,8 +1,18 @@
+/*
+Module Name:
+- cookie_jar.cpp
+
+Abstract:
+- RFC 6265 style cookie store: normalise with request-context defaults, upsert or
+  delete on expiry, select by host/path/scheme, and build Cookie headers.
+- Storage is bucketed by exact domain; domain_match is host-only at present.
+*/
+
 // C++ Standard Library
 #include <algorithm>
 #include <utility>
 
-// Project
+// Core
 #include <tb/net/http/cookie_jar.hpp>
 
 namespace tb::net
@@ -27,12 +37,13 @@ namespace tb::net
         {
             return false;
         }
+        // Either exact match or boundary on '/' per RFC path-match intent.
         return (req_path.size() == cookie_path.size()) || (cookie_path.back() == '/' || req_path[cookie_path.size()] == '/');
     }
 
     bool CookieJar::domain_match(std::string_view host, std::string_view cookie_domain) noexcept
     {
-        // Strict host-only match for now.
+        // Host-only match for now.
         return host == cookie_domain;
     }
 
@@ -95,6 +106,7 @@ namespace tb::net
         Cookie nc = normalise(c, default_domain, default_path, from_https);
         if (nc.expired_at(now))
         {
+            // Expired Set-Cookie acts as a delete.
             auto it = by_domain_.find(nc.domain);
             if (it != by_domain_.end())
             {
@@ -118,6 +130,7 @@ namespace tb::net
         Cookie nc = normalise(std::move(c), default_domain, default_path, from_https);
         if (nc.expired_at(now))
         {
+            // Expired Set-Cookie acts as a delete.
             auto it = by_domain_.find(nc.domain);
             if (it != by_domain_.end())
             {
@@ -145,6 +158,7 @@ namespace tb::net
         Cookie c = std::move(*parsed);
         if (c.expired_at(now))
         {
+            // Expired Set-Cookie acts as a delete.
             auto it = by_domain_.find(c.domain);
             if (it != by_domain_.end())
             {
@@ -197,6 +211,7 @@ namespace tb::net
             out.push_back(c);
         }
 
+        // Longest-path-first order as per common client behaviour.
         std::sort(out.begin(), out.end(), [](const Cookie& a, const Cookie& b) { return a.path.size() > b.path.size(); });
 
         return out;

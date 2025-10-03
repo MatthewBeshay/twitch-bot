@@ -1,3 +1,13 @@
+/*
+Module Name:
+- url.hpp
+
+Abstract:
+- Minimal URL parse and resolve helpers for an HTTP client.
+- Resolve supports absolute, scheme-relative, absolute-path, and relative refs.
+- Dot-segment removal is a lightweight normalisation for common cases.
+- Query is stored with a leading '?' so target() can concatenate cheaply.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -14,14 +24,14 @@ namespace tb::net
         std::string host;
         std::string port;
         std::string path;
-        std::string query;
+        std::string query; // includes leading '?' when present
 
-        bool is_absolute() const noexcept
+        [[nodiscard]] bool is_absolute() const noexcept
         {
             return !scheme.empty();
         }
 
-        std::string authority() const
+        [[nodiscard]] std::string authority() const
         {
             std::string out = host;
             if (!port.empty())
@@ -32,18 +42,18 @@ namespace tb::net
             return out;
         }
 
-        std::string target() const
+        [[nodiscard]] std::string target() const
         {
             if (query.empty())
             {
                 return path.empty() ? std::string{ "/" } : path;
             }
             std::string out = path.empty() ? std::string{ "/" } : path;
-            out += query;
+            out += query; // query already has leading '?'
             return out;
         }
 
-        std::string origin() const
+        [[nodiscard]] std::string origin() const
         {
             std::string out = scheme;
             out += "://";
@@ -56,6 +66,7 @@ namespace tb::net
     {
         Url u;
 
+        // scheme "://"
         auto pos = s.find("://");
         if (pos != std::string_view::npos)
         {
@@ -63,6 +74,7 @@ namespace tb::net
             s.remove_prefix(pos + 3);
         }
 
+        // authority
         if (!u.scheme.empty())
         {
             auto slash = s.find('/');
@@ -76,6 +88,7 @@ namespace tb::net
                 s.remove_prefix(slash);
             }
 
+            // split host[:port] using last ':'
             auto colon = auth.rfind(':');
             if (colon != std::string_view::npos)
             {
@@ -88,6 +101,7 @@ namespace tb::net
             }
         }
 
+        // path and optional query (query kept with leading '?')
         auto q = s.find('?');
         if (q == std::string_view::npos)
         {
@@ -100,17 +114,21 @@ namespace tb::net
         }
 
         if (u.path.empty() || u.path.front() != '/')
+        {
             u.path.insert(u.path.begin(), '/');
+        }
         return u;
     }
 
     inline Url resolve_url(const Url& base, std::string_view location)
     {
+        // absolute
         if (location.find("://") != std::string_view::npos)
         {
             return parse_url(location);
         }
 
+        // scheme-relative: "//host/..."
         if (location.rfind("//", 0) == 0)
         {
             Url out = parse_url(std::string(base.scheme) + ":" + std::string(location));
@@ -118,6 +136,8 @@ namespace tb::net
         }
 
         Url out = base;
+
+        // absolute-path
         if (!location.empty() && location.front() == '/')
         {
             out.path.assign(location.begin(), location.end());
@@ -125,6 +145,7 @@ namespace tb::net
             return out;
         }
 
+        // relative-path: trim to last '/', then append
         auto last_slash = out.path.rfind('/');
         if (last_slash == std::string::npos)
         {
@@ -134,9 +155,9 @@ namespace tb::net
         {
             out.path.resize(last_slash + 1);
         }
-
         out.path.append(location);
 
+        // normalise: remove "/./"
         for (;;)
         {
             auto i = out.path.find("/./");
@@ -146,6 +167,7 @@ namespace tb::net
             }
             out.path.erase(i, 2);
         }
+        // normalise: collapse "/../"
         for (;;)
         {
             auto i = out.path.find("/../");

@@ -1,3 +1,13 @@
+/*
+Module Name:
+- br_decoder.cpp
+
+Abstract:
+- Brotli decoder backend used by encoding::decode.
+- Streams input through BrotliDecoderDecompressStream into a fixed scratch buffer.
+- On success clears ec; on failure sets decompression_failure.
+*/
+
 // C++ Standard Library
 #include <string>
 #include <string_view>
@@ -6,7 +16,7 @@
 // Brotli
 #include <brotli/decode.h>
 
-// Project
+// Core
 #include <tb/net/http/encoding.hpp>
 #include <tb/net/http/error.hpp>
 
@@ -51,7 +61,7 @@ namespace tb::net::encoding
                 ec = errc::decompression_failure;
                 return false;
             }
-            // NEEDS_MORE_INPUT / NEEDS_MORE_OUTPUT → loop again until success/error
+            // NEEDS_MORE_INPUT / NEEDS_MORE_OUTPUT -> loop again until success or error
         }
     }
 

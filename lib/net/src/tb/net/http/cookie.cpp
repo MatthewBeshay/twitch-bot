@@ -1,3 +1,14 @@
+/*
+Module Name:
+- cookie.cpp
+
+Abstract:
+- Parse Set-Cookie into Cookie and build the Cookie request header.
+- Tolerant parser: trims tokens, treats keys case-insensitively, strips leading dot on Domain.
+- Expires parsed as RFC 1123 GMT; Max-Age via from_chars.
+- Security: Partitioned and SameSite=None imply Secure.
+*/
+
 // C++ Standard Library
 #include <algorithm>
 #include <charconv>
@@ -9,7 +20,7 @@
 #include <time.h>
 #endif
 
-// Project
+// Core
 #include <tb/net/http/cookie.hpp>
 
 namespace tb::net
@@ -17,7 +28,7 @@ namespace tb::net
 
     namespace
     {
-
+        // ASCII trim helpers for header tokens.
         inline void ltrim(std::string_view& sv)
         {
             while (!sv.empty() && static_cast<unsigned char>(sv.front()) <= 0x20)
@@ -66,6 +77,7 @@ namespace tb::net
             return true;
         }
 
+        // Parse RFC 1123 date in GMT into a time_point.
         std::optional<std::chrono::system_clock::time_point> parse_http_date(std::string_view s)
         {
             std::tm tm{};
@@ -103,6 +115,7 @@ namespace tb::net
             return std::nullopt;
         }
 
+        // Split on ';' and trim each part.
         std::vector<std::string_view> parts;
         {
             std::string_view sv = line;
@@ -123,6 +136,7 @@ namespace tb::net
             return std::nullopt;
         }
 
+        // name=value
         auto nv = parts[0];
         auto eq = nv.find('=');
         if (eq == std::string_view::npos)
@@ -139,6 +153,7 @@ namespace tb::net
 
         Cookie c{ name, value };
 
+        // Defaults come from the response context.
         c.domain = to_lower(default_domain);
         if (!c.domain.empty() && c.domain.front() == '.')
         {
@@ -146,6 +161,7 @@ namespace tb::net
         }
         c.path = default_path.empty() ? "/" : std::string{ default_path };
 
+        // Attributes
         for (size_t i = 1; i < parts.size(); ++i)
         {
             auto attr = parts[i];
@@ -209,7 +225,7 @@ namespace tb::net
                 else if (lv == "none")
                 {
                     c.same_site = SameSite::kNone;
-                    c.secure = true;
+                    c.secure = true; // browsers require Secure when SameSite=None
                 }
                 else
                 {
@@ -219,7 +235,7 @@ namespace tb::net
             else if (ieq(k, "partitioned"))
             {
                 c.partitioned = true;
-                c.secure = true;
+                c.secure = true; // partitioned cookies must be Secure
             }
         }
 

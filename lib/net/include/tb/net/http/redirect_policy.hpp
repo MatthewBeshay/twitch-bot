@@ -1,3 +1,13 @@
+/*
+Module Name:
+- redirect_policy.hpp
+
+Abstract:
+- Redirect handling policy for an HTTP client.
+- Encodes hop limits and rules: follow_none, safe_only, same_origin, follow_all.
+- next_verb applies HTTP semantics: 307/308 keep method; 303 becomes GET;
+  legacy 301/302 convert POST to GET for web compatibility.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -56,6 +66,10 @@ namespace tb::net
             mode_ = m;
         }
 
+        // Method rewriting per HTTP:
+        // - 307/308 preserve the original method.
+        // - 303 always becomes GET.
+        // - 301/302: convert POST to GET (prevailing browser behaviour).
         static boost::beast::http::verb next_verb(boost::beast::http::verb cur, int status) noexcept
         {
             if (keep_method_on_redirect(status))
@@ -84,6 +98,7 @@ namespace tb::net
             return scheme_a == scheme_b && host_a == host_b && port_a == port_b;
         }
 
+        // Decide whether to follow a hop from 'from' to 'to' given the resulting method.
         template<class Url>
         bool
         allow_hop(const Url& from, const Url& to, boost::beast::http::verb resulting) const noexcept

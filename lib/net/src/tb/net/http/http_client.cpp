@@ -1,3 +1,14 @@
+/*
+Module Name:
+- http_client.cpp
+
+Abstract:
+- Coroutine-based HTTPS client on Boost.Asio/Beast with a simple connection pool.
+- Pools by "host:port", applies per-stage timeouts, supports redirects and cookies.
+- Decodes gzip/br when requested and parses JSON with Glaze.
+- Design goal: minimal allocations and predictable behaviour under load.
+*/
+
 // C++ standard library
 #include <system_error>
 
@@ -20,7 +31,7 @@
 // GSL
 #include <gsl/gsl>
 
-// Project
+// Core
 #include <tb/net/http/cookie.hpp>
 #include <tb/net/http/cookie_jar.hpp>
 #include <tb/net/http/encoding.hpp>
@@ -40,7 +51,7 @@ namespace http_client
         executor_{ executor }, ssl_context_{ &ssl_context }, resolver_{ executor_ }, strand_{ executor_ }, expected_conns_per_host_{ expected_conns_per_host }
     {
         Expects(ssl_context_ != nullptr);
-        pool_.reserve(expected_hosts);
+        pool_.reserve(expected_hosts); // preallocate buckets for typical host count
     }
 
     auto client::get_allocator() const noexcept -> allocator_type
@@ -55,7 +66,9 @@ namespace http_client
             for (auto& c : vec)
             {
                 if (!c)
+                {
                     continue;
+                }
                 try
                 {
                     // Best effort: shutdown TLS and close
@@ -104,6 +117,7 @@ namespace http_client
         namespace beast = boost::beast;
         namespace http = beast::http;
 
+        // Bind strand and PMR allocator so handlers are serialised and stable.
         auto tok = asio::bind_allocator(get_allocator(), asio::bind_executor(strand_, asio::use_awaitable));
 
         std::string cur_host{ host };
@@ -139,6 +153,7 @@ namespace http_client
                 metrics.reused_connection = false;
             }
 
+            // Drop stale keep-alive connections.
             if (conn && std::chrono::steady_clock::now() - conn->last_used > k_pool_idle_timeout)
             {
                 conn.reset();
@@ -187,6 +202,7 @@ namespace http_client
 
             auto& vec = pool_[key];
             bool keep_alive = true;
+            // Return good sockets to the pool on scope exit.
             auto return_to_pool = gsl::finally([&] {
                 if (keep_alive && conn && boost::beast::get_lowest_layer(conn->stream).socket().is_open() && vec.size() < expected_conns_per_host_)
                 {
@@ -200,6 +216,7 @@ namespace http_client
             req.set(http::field::host, host_hdr);
             req.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
 
+            // Defaults aim at public JSON APIs; callers can override.
             if (!opts || opts->accept.empty())
             {
                 req.set(http::field::accept, "application/json");
@@ -284,6 +301,7 @@ namespace http_client
 
             const int status = metrics.status;
 
+            // Redirect handling: HTTPS only by design.
             if (tb::net::is_redirect_status(status))
             {
                 auto locIt = res.find(http::field::location);
@@ -368,6 +386,7 @@ namespace http_client
                 }
             }
 
+            // Glaze with null_terminated=true expects a trailing 0 in the buffer.
             body_decoded.push_back('\0');
             std::string_view sv{ body_decoded.data(), body_decoded.size() - 1 };
 
@@ -437,6 +456,7 @@ namespace http_client
             }
             catch (const std::system_error& /*se*/)
             {
+                // Network errors are retried if enabled.
                 if (retry_opts.retry_on_network_error && attempt < retry_opts.max_attempts)
                 {
                     delay_to_apply = retry_opts.next_delay(attempt);
@@ -448,6 +468,7 @@ namespace http_client
             }
             catch (const std::runtime_error& re)
             {
+                // Coarse 5xx detection based on our error message format.
                 const std::string_view msg{ re.what() };
                 const bool is_5xx = (msg.find(" returned 5") != std::string_view::npos);
                 if (retry_opts.retry_on_5xx && is_5xx && attempt < retry_opts.max_attempts)

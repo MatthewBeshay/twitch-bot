@@ -1,8 +1,18 @@
+/*
+Module Name:
+- mime.cpp
+
+Abstract:
+- Parse Content-Type into a media_type {type, subtype, charset}.
+- Tolerant to spacing and case; accepts quoted charset values.
+- Errors set errc::invalid_content_type on completely invalid input.
+*/
+
 // C++ Standard Library
 #include <algorithm>
 #include <cctype>
 
-// Project
+// Core
 #include <tb/net/http/mime.hpp>
 
 namespace tb::net::mime
@@ -10,6 +20,7 @@ namespace tb::net::mime
 
     namespace
     {
+        // ASCII-only trim for header tokens.
         inline void trim(std::string_view& sv)
         {
             while (!sv.empty() && std::isspace(static_cast<unsigned char>(sv.front())))
@@ -21,12 +32,16 @@ namespace tb::net::mime
                 sv.remove_suffix(1);
             }
         }
+
+        // Lowercase ASCII for case-insensitive matching.
         inline std::string to_lower(std::string_view sv)
         {
             std::string s;
             s.reserve(sv.size());
             for (unsigned char c : sv)
+            {
                 s.push_back(static_cast<char>(std::tolower(c)));
+            }
             return s;
         }
     } // namespace
@@ -54,6 +69,7 @@ namespace tb::net::mime
         std::string st = to_lower(semi == std::string_view::npos ? rest : rest.substr(0, semi));
         std::string cs;
 
+        // Parse parameters, capturing charset if present.
         if (semi != std::string_view::npos)
         {
             std::string_view params = rest.substr(semi + 1);
@@ -65,7 +81,9 @@ namespace tb::net::mime
 
                 trim(kv);
                 if (kv.empty())
+                {
                     continue;
+                }
                 auto eq = kv.find('=');
                 std::string key = to_lower(eq == std::string_view::npos ? kv : kv.substr(0, eq));
                 std::string_view val_sv = (eq == std::string_view::npos) ? std::string_view{} : kv.substr(eq + 1);
@@ -73,6 +91,7 @@ namespace tb::net::mime
 
                 if (key == "charset")
                 {
+                    // Accept quoted charset values.
                     if (!val_sv.empty() && (val_sv.front() == '"' || val_sv.front() == '\''))
                     {
                         char q = val_sv.front();

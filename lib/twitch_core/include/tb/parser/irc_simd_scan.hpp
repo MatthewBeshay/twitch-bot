@@ -1,19 +1,20 @@
-#pragma once
-// Minimal SIMD helpers for IRC parsing.
-// AVX2 and SSE2 on x86, optional NEON assist on AArch64, otherwise scalar.
-// The goal is to scan 64 bytes at a time and build bitmasks for key chars.
-//
-// Notes
-// - We never read past the available bytes. Near the end we copy to a
-//   small scratch and load from there only when needed.
-// - All comments use Australian English.
-//
-// API surface
-//   struct CharMasks { uint64_t spaces, semicolons, equals, colons, letters_m, letters_b,
-//   letters_u; } CharMasks scan64(const uint8_t* ptr, size_t n); uint32_t  pop_lowest(uint64_t&
-//   bits); const char* find_space_in_tags_and_flags(const char* ptr, const char* endp,
-//                                            uint8_t& is_mod, uint8_t& is_bc);
+/*
+Module Name:
+- irc_simd_scan.hpp
 
+Abstract:
+- 64 byte SIMD scanner for IRC parsing with graceful fallbacks.
+- Builds bitmasks for separator characters and a few letters we key on to
+  derive moderator and broadcaster flags while scanning the tag block.
+- AVX2 or SSE2 on x86, optional NEON assist on AArch64, scalar otherwise.
+*/
+#pragma once
+
+// Minimal SIMD helpers for IRC parsing.
+// Notes:
+// - Never read past the available bytes. For tails we copy into a small scratch.
+
+// C++ Standard Library
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -46,6 +47,7 @@ namespace irc_simd
     };
 
 #if defined(_MSC_VER)
+    // ctz on 64 bit, used to locate first set bit in masks.
     static inline uint32_t ctz64(uint64_t x)
     {
         unsigned long idx;
@@ -68,13 +70,13 @@ namespace irc_simd
     }
 
     // Build masks for up to 64 bytes at ptr.
-    // n must be in [0, 64].
+    // n in [0, 64].
     static inline CharMasks scan64(const uint8_t* ptr, size_t n)
     {
         CharMasks out{ 0, 0, 0, 0, 0, 0, 0 };
 
 #if IRC_SIMD_AVX2
-        // AVX2 path - direct loads for full lanes, copy only at the tail.
+        // AVX2: direct loads for full lanes, copy at the tail to avoid overread.
         auto movemask32 = [](__m256i v) -> uint32_t {
             __m128i lo = _mm256_castsi256_si128(v);
             __m128i hi = _mm256_extracti128_si256(v, 1);
@@ -120,10 +122,12 @@ namespace irc_simd
         out.letters_u = build_mask('u');
 
 #elif IRC_SIMD_SSE2
-        // SSE2 path: four 16 byte loads build a 64 bit mask.
+        // SSE2: four 16 byte loads produce a 64 bit mask, tail is zero padded.
         alignas(16) uint8_t buf[64]{};
         if (n)
+        {
             std::memcpy(buf, ptr, n);
+        }
 
         auto mask16 = [](const __m128i v, unsigned char c) -> uint16_t {
             __m128i m = _mm_cmpeq_epi8(v, _mm_set1_epi8(static_cast<char>(c)));
@@ -152,10 +156,12 @@ namespace irc_simd
         out.letters_u = m_u;
 
 #elif IRC_SIMD_NEON
-        // NEON assist: vector compare then compress to a bitmask in scalar.
+        // NEON assist: vector compare, then compress to a bitmask in scalar.
         uint8_t buf[64]{};
         if (n)
+        {
             std::memcpy(buf, ptr, n);
+        }
         auto pack16 = [](const uint8_t* p, unsigned char c) -> uint16_t {
             uint8x16_t v = vld1q_u8(p);
             uint8x16_t cmp = vceqq_u8(v, vdupq_n_u8(c));
@@ -190,7 +196,7 @@ namespace irc_simd
         out.letters_u = m_u;
 
 #else
-        // Scalar fallback - branch light and predictable.
+        // Scalar fallback - predictable and UB free.
         for (size_t i = 0; i < n; ++i)
         {
             const unsigned char ch = ptr[i];
@@ -219,14 +225,16 @@ namespace irc_simd
         return out;
     }
 
-    // Simple substring search for a small needle, no locale, no UB.
+    // Small needle search without locale or UB.
     static inline bool contains_broadcaster_1(const char* hay, const char* hay_end)
     {
         static constexpr char needle[] = "broadcaster/1";
         static constexpr size_t L = sizeof(needle) - 1;
         const size_t n = static_cast<size_t>(hay_end - hay);
         if (n < L)
+        {
             return false;
+        }
         for (size_t i = 0; i + L <= n; ++i)
         {
             if (std::memcmp(hay + i, needle, L) == 0)
@@ -235,7 +243,7 @@ namespace irc_simd
         return false;
     }
 
-    // Find the first space ending the tag block while updating moderator and broadcaster flags.
+    // Scan tags until the first space while updating moderator and broadcaster flags.
     static inline const char*
     find_space_in_tags_and_flags(const char* ptr, const char* endp, uint8_t& is_mod, uint8_t& is_bc)
     {
@@ -249,11 +257,10 @@ namespace irc_simd
             const size_t chunk = remain < 64 ? remain : size_t(64);
             const CharMasks m = scan64(reinterpret_cast<const uint8_t*>(scan), chunk);
 
-            // First space ends the tag block.
+            // First space ends the tag block. Harvest signals before returning.
             if (m.spaces)
             {
                 const uint32_t off = ctz64(m.spaces);
-                // Harvest signals in this chunk before exiting.
 
                 // "mod=1"
                 uint64_t mm = m.letters_m;
@@ -286,7 +293,7 @@ namespace irc_simd
                     if (endp - s >= 7 && std::memcmp(s, "badges=", 7) == 0)
                     {
                         const char* val = s + 7;
-                        // Value ends at next semicolon or at the space.
+                        // Value ends at next semicolon or space.
                         const char* stop = val;
                         for (;;)
                         {
@@ -304,7 +311,9 @@ namespace irc_simd
                                 break;
                             }
                             if (enders)
+                            {
                                 break;
+                            }
                             stop += c;
                         }
                     }
@@ -312,9 +321,8 @@ namespace irc_simd
                 return scan + off;
             }
 
-            // No space yet - continue scanning this chunk.
+            // No space yet - continue scanning and accumulate signals in this chunk.
 
-            // "mod=1"
             uint64_t mm = m.letters_m;
             while (mm && !is_mod)
             {
@@ -325,7 +333,6 @@ namespace irc_simd
                     is_mod = 1;
                 }
             }
-            // "user-type=mod"
             uint64_t uu = m.letters_u;
             while (uu && !is_mod)
             {
@@ -336,7 +343,6 @@ namespace irc_simd
                     is_mod = 1;
                 }
             }
-            // badges value contains "broadcaster/1"
             uint64_t bb = m.letters_b;
             while (bb && !is_bc)
             {
@@ -371,7 +377,7 @@ namespace irc_simd
             // Advance to next 64 byte window.
             scan += chunk;
         }
-        // No space - the whole rest is raw tags.
+        // No space found; the rest is raw tags.
         return endp;
     }
 

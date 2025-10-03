@@ -1,5 +1,10 @@
-﻿// Twitch IRC client implementation.
-// Uses Beast tcp_stream with TLS and WebSocket.
+// Twitch IRC client implementation over TLS WebSocket.
+
+// Why:
+// - Keep the ws and TLS handshakes on tight deadlines to avoid hanging connects.
+// - Enforce peer verification and SNI to prevent MITM.
+// - Serialise writes explicitly to avoid concurrent async writes on the WS stream.
+// - Clip and wrap chat text on UTF-8 boundaries and sanitise CR/LF to match Twitch limits.
 
 // C++ Standard Library
 #include <algorithm>
@@ -30,7 +35,7 @@
 // OpenSSL
 #include <openssl/ssl.h>
 
-// Project
+// Core
 #include <tb/twitch/irc_client.hpp>
 
 namespace twitch_bot
@@ -48,12 +53,13 @@ namespace twitch_bot
                          std::string_view control_channel) :
         ws_stream_{ boost::asio::make_strand(executor), ssl_context }, ping_timer_{ executor }, access_token_{ access_token }, control_channel_{ control_channel }, write_gate_{ executor }
     {
+        // Start with an already-expired timer so waiters can block until first write completes.
         write_gate_.expires_at(std::chrono::steady_clock::time_point::max());
     }
 
     IrcClient::~IrcClient() noexcept
     {
-        // Best-effort wipe. Compilers may optimise this, but it helps in practice.
+        // Best-effort secret scrubbing. Helps reduce lifetime of sensitive data in memory.
         std::fill(access_token_.begin(), access_token_.end(), '\0');
     }
 
@@ -64,7 +70,7 @@ namespace twitch_bot
 
         auto executor = co_await boost::asio::this_coro::executor;
 
-        // DNS and TCP connect with deadline control.
+        // DNS and TCP connect with deadlines to avoid stalls.
         boost::asio::ip::tcp::resolver resolver{ executor };
         auto results = co_await resolver.async_resolve(host_name, port_str, use_awaitable);
 
@@ -73,17 +79,17 @@ namespace twitch_bot
         co_await tcp.async_connect(results, use_awaitable);
         tcp.expires_never();
 
-        // Low latency socket options.
+        // Low latency socket options - Twitch chat is latency sensitive.
         tcp.socket().set_option(boost::asio::ip::tcp::no_delay(true));
         tcp.socket().set_option(boost::asio::socket_base::keep_alive(true));
 
-        // TLS setup and verification policy.
+        // TLS - explicitly load CA bundle and enable peer verification.
         auto& ssl = ws_stream_.next_layer();
-
         if (SSL* s = ssl.native_handle())
         {
             if (SSL_CTX* ctx = ::SSL_get_SSL_CTX(s))
             {
+                // Why: some distros or portable builds do not have a default CA path.
                 if (::SSL_CTX_load_verify_locations(ctx, TB_CACERT_PEM_PATH, nullptr) != 1)
                 {
                     const unsigned long e = ::ERR_get_error();
@@ -100,7 +106,7 @@ namespace twitch_bot
             throw std::runtime_error("SSL handle unavailable");
         }
 
-        // SNI and hostname verification.
+        // SNI + hostname verification are required for secure WS endpoints.
         if (!::SSL_set_tlsext_host_name(ssl.native_handle(), host_name))
         {
             throw std::system_error{ static_cast<int>(::ERR_get_error()),
@@ -110,12 +116,12 @@ namespace twitch_bot
         (void)::SSL_set1_host(ssl.native_handle(), host_name);
         ssl.set_verify_mode(boost::asio::ssl::verify_peer);
 
-        // TLS handshake with a deadline.
+        // TLS handshake under deadline to bound time-to-failure.
         tcp.expires_after(std::chrono::seconds(30));
         co_await ssl.async_handshake(boost::asio::ssl::stream_base::client, use_awaitable);
         tcp.expires_never();
 
-        // WebSocket configuration.
+        // WebSocket settings - no auto fragmentation and strict read cap for predictable memory.
         ws_stream_.set_option(
             beast::websocket::stream_base::timeout::suggested(beast::role_type::client));
         ws_stream_.set_option(
@@ -126,21 +132,21 @@ namespace twitch_bot
         ws_stream_.auto_fragment(false);
         ws_stream_.read_message_max(k_read_buffer_size);
 
-        // WebSocket handshake.
+        // WS handshake under deadline.
         tcp.expires_after(std::chrono::seconds(30));
         co_await ws_stream_.async_handshake(host_name, "/", use_awaitable);
         tcp.expires_never();
 
-        // IRC writes are text frames.
+        // IRC over WS uses text frames.
         ws_stream_.text(true);
 
-        // Protocol tokens - string_view avoids mismatched lengths.
+        // Use string_view constants so we cannot mismatch literal lengths.
         using sv = std::string_view;
         static constexpr sv PASS_ = "PASS ";
         static constexpr sv NICK_ = "NICK ";
         static constexpr sv CAPS = "CAP REQ :twitch.tv/membership twitch.tv/tags twitch.tv/commands\r\n";
 
-        // PASS, NICK, CAP.
+        // Authenticate and request capabilities.
         {
             std::array<const_buffer, 3> bufs_pass{ buffer(PASS_), buffer(access_token_), boost::asio::buffer(kCRLF) };
             co_await send_buffers(bufs_pass);
@@ -155,15 +161,14 @@ namespace twitch_bot
         }
 
 #ifndef NDEBUG
-        // Channels must not include '#'.
+        // Guard against accidental '#'-prefixed channels at call sites.
         for (auto ch : channels)
         {
             assert(ch.find('#') == std::string_view::npos);
         }
 #endif
 
-        // JOIN multiple channels, respecting the 512 byte IRC limit.
-        // Format: "JOIN #a,#b,#c\r\n"
+        // JOIN channels respecting the 512 byte IRC limit.
         if (!channels.empty())
         {
             static constexpr std::size_t k_irc_max_line = 512; // includes CRLF
@@ -172,8 +177,9 @@ namespace twitch_bot
             {
                 total_names += ch.size();
             }
+
             std::string line;
-            line.reserve(6 + 2 * channels.size() + total_names + 2); // "JOIN " + '#' and commas + CRLF
+            line.reserve(6 + 2 * channels.size() + total_names + 2);
 
             line.assign("JOIN ");
 
@@ -199,8 +205,8 @@ namespace twitch_bot
                 first = false;
             }
 
-            if (line.size() > 5)
-            { // more than "JOIN "
+            if (line.size() > 5) // more than "JOIN "
+            {
                 line.append("\r\n");
                 std::array<const_buffer, 1> bufs{ buffer(line) };
                 co_await send_buffers(bufs);
@@ -237,10 +243,11 @@ namespace twitch_bot
     {
         try
         {
+            // Why: Beast WS does not allow overlapping writes. Use a timer as a simple gate
+            // that writers can await without busy waiting.
             while (write_inflight_)
             {
                 boost::system::error_code ec;
-                // Make sure the timer is in a waitable state.
                 write_gate_.expires_at(std::chrono::steady_clock::time_point::max());
                 co_await write_gate_.async_wait(
                     boost::asio::redirect_error(boost::asio::use_awaitable, ec));
@@ -250,10 +257,11 @@ namespace twitch_bot
             co_await ws_stream_.async_write(buffers, boost::asio::use_awaitable);
             write_inflight_ = false;
 
-            write_gate_.cancel();
+            write_gate_.cancel(); // wake one waiter
         }
         catch (...)
         {
+            // On any failure: release the gate and close the connection to recover later.
             write_inflight_ = false;
             try
             {
@@ -262,7 +270,6 @@ namespace twitch_bot
             catch (...)
             {
             }
-
             try
             {
                 close();
@@ -307,14 +314,15 @@ namespace twitch_bot
         co_await send_buffers(bufs);
     }
 
-    // --------- helpers for wrapped sending ---------
-
+    // - Clip at code point boundaries and prefer breaking at ASCII space or newline.
+    // - Twitch enforces 500 byte payloads.
     std::size_t IrcClient::utf8_clip_len(std::string_view s, std::size_t max_bytes) noexcept
     {
         if (s.size() <= max_bytes)
         {
             return s.size();
         }
+
         std::size_t i = max_bytes;
         while (i > 0 && (static_cast<unsigned char>(s[i - 1]) & 0xC0) == 0x80)
         {
@@ -341,6 +349,7 @@ namespace twitch_bot
 
         std::size_t end = start + hard;
 
+        // Prefer the last ASCII space or line break to avoid mid-word splits.
         for (std::size_t i = end; i > start; --i)
         {
             const char c = s[i - 1];
@@ -354,11 +363,11 @@ namespace twitch_bot
         {
             end = start + hard;
         }
+
         return end - start;
     }
 
-    // Allocation free wrappers - remain noexcept and keep latency stable.
-
+    // Allocation-free wrappers that normalise CR/LF to space and send in 500 byte chunks.
     auto IrcClient::privmsg_wrap(std::string_view channel, std::string_view text) noexcept
         -> boost::asio::awaitable<void>
     {
@@ -477,11 +486,11 @@ namespace twitch_bot
 
     auto IrcClient::ping_loop() -> boost::asio::awaitable<void, boost::asio::any_io_executor>
     {
+        // Why: Twitch servers may idle-timeout. Keep the link alive with periodic PINGs.
         for (;;)
         {
             ping_timer_.expires_after(std::chrono::minutes{ 4 });
 
-            // Cancellation surfaces as an error_code.
             boost::system::error_code ec;
             co_await ping_timer_.async_wait(
                 boost::asio::redirect_error(boost::asio::use_awaitable, ec));
@@ -499,7 +508,7 @@ namespace twitch_bot
     {
         ping_timer_.cancel();
 
-        // Best-effort clean close. Do not call async_shutdown on TLS here.
+        // Best-effort clean close. Avoid TLS shutdown here to reduce teardown latency.
         try
         {
             boost::asio::dispatch(ws_stream_.get_executor(), [this] {

@@ -1,3 +1,13 @@
+/*
+Module Name:
+- http_client.hpp
+
+Abstract:
+- Asynchronous HTTP/HTTPS client built on Boost.Asio/Beast with connection pooling.
+- Coroutine API for GET/POST, optional retries, metrics, and cookie support.
+- stream_get consumes HTTP chunked transfer and calls a user handler per chunk.
+- Streaming uses identity encoding on purpose to avoid on-the-fly decompression.
+*/
 #pragma once
 
 // C++ standard library
@@ -73,20 +83,28 @@ namespace http_client
         inline std::string_view path_from_target(std::string_view target) noexcept
         {
             if (target.empty())
+            {
                 return std::string_view{ "/" };
+            }
             const auto q = target.find('?');
             auto path = (q == std::string_view::npos) ? target : target.substr(0, q);
             if (path.empty())
+            {
                 return std::string_view{ "/" };
+            }
             return path;
         }
 
         inline std::string_view default_port_for_scheme(std::string_view scheme) noexcept
         {
             if (scheme == "https")
+            {
                 return "443";
+            }
             if (scheme == "http")
+            {
                 return "80";
+            }
             return {};
         }
 
@@ -120,6 +138,7 @@ namespace http_client
     using http_header = std::pair<std::string_view, std::string_view>;
     using http_headers = std::span<const http_header>;
 
+    // Default sizing and timeouts tuned for typical public APIs.
     inline constexpr std::size_t k_default_expected_hosts = 16;
     inline constexpr std::size_t k_default_connections_per_host = 4;
 
@@ -142,7 +161,7 @@ namespace http_client
             std::string host, port, target;
             int status{ 0 };
 
-            // timings
+            // Timings for visibility into the slowest stage.
             std::chrono::steady_clock::duration t_dns{};
             std::chrono::steady_clock::duration t_connect{};
             std::chrono::steady_clock::duration t_tls{};
@@ -251,7 +270,9 @@ namespace http_client
                         bool from_https = true)
         {
             if (!cookies_enabled_)
+            {
                 return;
+            }
             cookies_.store(c, host, path, from_https);
         }
 
@@ -308,6 +329,7 @@ namespace http_client
                                                const RequestOptions* opts,
                                                RequestMetrics* out_metrics);
 
+        // Zero means use the library default; keeps public options terse.
         static inline std::chrono::steady_clock::duration
         or_default(std::chrono::steady_clock::duration v,
                    std::chrono::steady_clock::duration def) noexcept
@@ -320,8 +342,10 @@ namespace http_client
         boost::asio::ip::tcp::resolver resolver_;
         boost::asio::strand<boost::asio::any_io_executor> strand_;
 
+        // PMR buffer used for handler allocations bound into coroutines.
         mutable std::pmr::monotonic_buffer_resource handler_buffer_;
 
+        // Connection pool keyed by "host:port".
         std::unordered_map<std::string,
                            std::pmr::vector<std::shared_ptr<connection>>,
                            TransparentBasicStringHash<char>,
@@ -349,6 +373,7 @@ namespace http_client
         namespace beast = boost::beast;
         namespace http = beast::http;
 
+        // Bind the strand and PMR allocator so handlers run serially with stable allocations.
         auto tok = asio::bind_allocator(get_allocator(), asio::bind_executor(strand_, asio::use_awaitable));
 
         std::string key = detail::make_pool_key(host, port);
@@ -366,6 +391,7 @@ namespace http_client
             vec.pop_back();
         }
 
+        // Drop idle connections beyond the pool idle timeout.
         if (conn && std::chrono::steady_clock::now() - conn->last_used > k_pool_idle_timeout)
         {
             conn.reset();
@@ -401,7 +427,7 @@ namespace http_client
         req.set(http::field::host, host_hdr);
         req.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
         req.set(http::field::accept, "application/json");
-        req.set(http::field::accept_encoding, "identity"); // important
+        req.set(http::field::accept_encoding, "identity"); // streaming path expects no decompression
 
         if (cookies_enabled_)
         {
@@ -455,6 +481,7 @@ namespace http_client
             cookies_.evict_expired();
         }
 
+        // Return open keep-alive connections to the pool on scope exit.
         auto return_to_pool = gsl::finally([&, keep_alive] {
             if (keep_alive && conn && beast::get_lowest_layer(conn->stream).socket().is_open() && vec.size() < expected_conns_per_host_)
             {
@@ -482,7 +509,9 @@ namespace http_client
                 for (;;)
                 {
                     if (avail == 0)
+                    {
                         break;
+                    }
                     if (auto sv = get_next_chunk(p, avail, chunk_state))
                     {
                         const bool fin = !is_parsing_chunked_encoding(chunk_state);
@@ -491,12 +520,12 @@ namespace http_client
                         {
                             const std::size_t consumed = static_cast<std::size_t>(p - begin);
                             cbuf.consume(consumed);
-                            return true;
+                            return true; // terminal zero-size chunk reached
                         }
                     }
                     else
                     {
-                        break;
+                        break; // need more bytes
                     }
                 }
 

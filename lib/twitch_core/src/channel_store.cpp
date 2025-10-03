@@ -1,3 +1,16 @@
+/*
+Module Name:
+- channel_store.cpp
+
+Abstract:
+- Persistence and concurrency mechanics for ChannelStore.
+
+Why:
+- Debounced writes avoid hammering the filesystem during bursts of updates.
+- Destructor waits on the strand so no handlers outlive this object.
+- Save is crash safe by writing to a temp file then renaming atomically.
+*/
+
 // C++ Standard Library
 #include <fstream>
 #include <future>
@@ -5,22 +18,22 @@
 #include <sstream>
 #include <system_error>
 
-// Project
+// Core
 #include <tb/twitch/channel_store.hpp>
 
 namespace {
-// Write-back debounce interval.
+// Debounce interval for write back. Large enough to batch edits, small enough to feel prompt.
 inline constexpr std::chrono::seconds kSaveDelay{5};
 } // unnamed namespace
 
 namespace twitch_bot {
 
-// Wait until every handler queued on strand_ completes.
+// Waits until every handler already queued on strand_ completes.
+// Why: avoids destroying state while work is still pending on the same strand.
 ChannelStore::~ChannelStore()
 {
     try {
-        // If we're already running on the strand, there cannot be any other
-        // concurrently-executing handlers on it; just return.
+        // If already on the strand then no other handlers can run concurrently here.
         if (strand_.running_in_this_thread())
             return;
 
@@ -70,6 +83,7 @@ void ChannelStore::load()
 
 void ChannelStore::save() const noexcept
 {
+    // Mark dirty and ensure exactly one timer is scheduled to coalesce bursts.
     dirty_.store(true, std::memory_order_relaxed);
 
     bool expected = false;
@@ -85,9 +99,10 @@ void ChannelStore::save() const noexcept
 
 void ChannelStore::perform_save() const noexcept
 {
+    // Build a snapshot under shared lock, then write without holding locks.
     toml::table tbl = build_table();
 
-    // Write to temporary file then atomically rename.
+    // Write to a temp file then atomically rename so readers never see partial files.
     const auto tmp = filename_.string() + ".tmp";
     {
         std::ofstream out{tmp, std::ios::trunc | std::ios::binary};
@@ -129,21 +144,21 @@ toml::table ChannelStore::build_table() const
     return tbl;
 }
 
-// ------------------ thread-safe API ------------------
+// ------------------ thread safe API ------------------
 
 void ChannelStore::add_channel(std::string_view channel)
 {
     std::lock_guard guard{data_mutex_};
     channel_data_.emplace(
         std::piecewise_construct, std::forward_as_tuple(channel), std::forward_as_tuple());
-    dirty_.store(true, std::memory_order_relaxed);
+    dirty_.store(true, std::memory_order_relaxed); // nudge debounced save
 }
 
 void ChannelStore::remove_channel(std::string_view channel) noexcept
 {
     std::lock_guard guard{data_mutex_};
     channel_data_.erase(channel);
-    dirty_.store(true, std::memory_order_relaxed);
+    dirty_.store(true, std::memory_order_relaxed); // nudge debounced save
 }
 
 bool ChannelStore::contains(std::string_view channel) const noexcept
@@ -156,7 +171,7 @@ std::optional<std::string> ChannelStore::get_alias(std::string_view channel) con
 {
     std::shared_lock guard{data_mutex_};
     if (auto itr = channel_data_.find(channel); itr != channel_data_.end() && itr->second.alias) {
-        return *itr->second.alias; // copy for safety
+        return *itr->second.alias; // copy so callers can keep it after map mutations
     }
     return std::nullopt;
 }
@@ -176,8 +191,10 @@ void ChannelStore::channel_names(std::vector<std::string_view>& out) const
     out.clear();
     out.reserve(channel_data_.size());
     for (const auto& [name, info] : channel_data_) {
-        out.push_back(name); // copy to avoid dangling
+        out.push_back(name);
     }
+    // Note: returned views point into the map keys. They become dangling after a mutation.
+    // Why: avoids allocations here. Callers should copy if they need long lived strings.
 }
 
 } // namespace twitch_bot

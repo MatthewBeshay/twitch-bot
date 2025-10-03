@@ -1,3 +1,12 @@
+/*
+Module Name:
+- irc_message_parser.hpp
+
+Abstract:
+- Zero-copy IRC line parser for hot paths.
+- Produces views into the input buffer, avoids allocations, and uses a 64 byte SIMD scanner for separators.
+- Detects Twitch-specific moderator and broadcaster signals from tags while scanning.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -15,50 +24,49 @@
 // GSL
 #include <gsl/gsl>
 
-// Project
+// Core
 #include "irc_simd_scan.hpp"
 #include <tb/utils/attributes.hpp>
 
 namespace twitch_bot
 {
 
-    /// Parsed IRC message - views into the original buffer, no ownership or allocations.
+    // Parsed IRC message - views only, no ownership.
     struct IrcMessage
     {
-        static constexpr std::size_t max_params = 16; // hard limit on middle parameters
+        static constexpr std::size_t max_params = 16; // hard cap on middle params
 
-        std::string_view command; // IRC command (e.g. "PRIVMSG")
-        std::array<std::string_view, max_params> params; // middle parameters
+        std::string_view command; // e.g. "PRIVMSG"
+        std::array<std::string_view, max_params> params;
 
-        // Using plain bytes instead of bitfields tends to generate simpler code in hot loops.
-        uint8_t param_count = 0; // populated entries in params
-        uint8_t is_moderator = 0; // tag "mod=1" present
-        uint8_t is_broadcaster = 0; // broadcaster badge present
+        // Use bytes instead of bitfields to keep generated code simple in hot loops.
+        uint8_t param_count = 0;
+        uint8_t is_moderator = 0; // tag "mod=1" or "user-type=mod"
+        uint8_t is_broadcaster = 0; // badges contains "broadcaster/1"
 
-        std::string_view raw_tags; // full tag block (no leading '@')
-        std::string_view prefix; // server or user prefix (no ':')
-        std::string_view trailing; // text after the trailing ':'
+        std::string_view raw_tags; // entire tag block without leading '@'
+        std::string_view prefix; // server or user, without leading ':'
+        std::string_view trailing; // text after the first leading ':' in the trailing field
 
-        static constexpr std::size_t mod_tag_len = 5; // length of "mod=1"
-        static constexpr std::size_t broadcaster_tag_len = 13; // length of "broadcaster/1"
-        static constexpr std::size_t badges_prefix_len = 7; // length of "badges="
+        static constexpr std::size_t mod_tag_len = 5; // "mod=1"
+        static constexpr std::size_t broadcaster_tag_len = 13; // "broadcaster/1"
+        static constexpr std::size_t badges_prefix_len = 7; // "badges="
 
-        /// Span of parameters (mutable when object is non-const).
+        // Params as a span for ergonomic iteration without copying.
         [[nodiscard]]
         TB_FORCE_INLINE auto parameters() noexcept -> gsl::span<std::string_view>
         {
             return { params.data(), params.data() + param_count };
         }
 
-        /// Read-only span of parameters.
         [[nodiscard]]
         TB_FORCE_INLINE auto parameters() const noexcept -> gsl::span<const std::string_view>
         {
             return { params.data(), params.data() + param_count };
         }
 
-        /// First tag value matching \p key, or empty if absent.
-        /// Precondition: \p key is non-empty.
+        // Fast single-pass tag lookup to avoid allocating a map.
+        // Pre: key is non-empty.
         [[nodiscard]]
         TB_FORCE_INLINE auto get_tag(std::string_view key) const noexcept -> std::string_view
         {
@@ -85,14 +93,7 @@ namespace twitch_bot
 
                 // advance to next tag
                 const char* next_sep = static_cast<const char*>(std::memchr(cursor, ';', endp - cursor));
-                if (next_sep)
-                {
-                    cursor = next_sep + 1;
-                }
-                else
-                {
-                    cursor = endp;
-                }
+                cursor = next_sep ? next_sep + 1 : endp;
             }
 
             return {};
@@ -102,10 +103,10 @@ namespace twitch_bot
     namespace detail
     {
 
-        // Find first space or return endp. Uses the 64-byte scanner.
+        // Find first space cheaply. SIMD over 64 byte blocks with a short scalar fast path.
         TB_FORCE_INLINE const char* find_first_space_fast(const char* ptr, const char* endp) noexcept
         {
-            // Small-range scalar fast path
+            // Small input: scalar is cheaper than setting up SIMD.
             if (static_cast<size_t>(endp - ptr) < 16)
             {
                 if (const void* p = std::memchr(ptr, ' ', static_cast<size_t>(endp - ptr)))
@@ -130,11 +131,12 @@ namespace twitch_bot
             return endp;
         }
 
-        // Split params by spaces and detect trailing when a token begins with ':'.
+        // Split middle params by spaces and capture trailing when a token starts with ':'.
+        // This keeps a single forward pass and avoids extra scans.
         TB_FORCE_INLINE void
         parse_params_and_trailing_fast(const char* ptr, const char* endp, IrcMessage& msg) noexcept
         {
-            // Small-range scalar fast path
+            // Small input: scalar wins.
             if (static_cast<size_t>(endp - ptr) < 16)
             {
                 const char* p = ptr;
@@ -221,10 +223,10 @@ namespace twitch_bot
 
     } // namespace detail
 
-    /// Parse one raw IRC line (no CRLF) into an IrcMessage.
-    /// All views refer to \p raw; no allocations.
-    /// Pre: raw.empty() || raw.data() != nullptr.
-    /// Post: result.param_count <= max_params.
+    // Parse one raw IRC line (no CRLF) into an IrcMessage.
+    // All views refer to 'raw'; no allocations.
+    // Pre: raw.empty() || raw.data() is not null.
+    // Post: param_count <= max_params.
     [[nodiscard]]
     TB_FORCE_INLINE auto parse_irc_line(std::string_view raw) noexcept -> IrcMessage
     {
@@ -234,7 +236,7 @@ namespace twitch_bot
         const char* ptr = raw.data();
         const char* const endp = ptr + raw.size();
 
-        // [1] tags block - SIMD fast path
+        // [1] tags block - processed with a SIMD assisted scan that also finds mod and broadcaster.
         if (ptr < endp && *ptr == '@')
         {
             ++ptr;
@@ -250,12 +252,12 @@ namespace twitch_bot
             if (tag_space == endp)
             {
                 Ensures(msg.param_count <= IrcMessage::max_params);
-                return msg; // no space - only tags present
+                return msg; // only tags present
             }
             ptr = tag_space + 1;
         }
 
-        // [2] prefix
+        // [2] optional prefix
         if (ptr < endp && *ptr == ':')
         {
             ++ptr;
@@ -286,7 +288,7 @@ namespace twitch_bot
             }
         }
 
-        // [4] parameters and trailing
+        // [4] params and trailing
         detail::parse_params_and_trailing_fast(ptr, endp, msg);
         Ensures(msg.param_count <= IrcMessage::max_params);
         return msg;

@@ -1,13 +1,23 @@
+/*
+Module Name:
+- gzip_decoder.cpp
+
+Abstract:
+- Gzip decoder backend used by encoding::decode.
+- Uses zlib inflate with 16 + MAX_WBITS to accept gzip wrapper.
+- Streams into a fixed 16 KiB scratch buffer; sets decompression_failure on errors.
+*/
+
 // C++ Standard Library
 #include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
 
-// Zlib
+// zlib
 #include <zlib.h>
 
-// Project
+// Core
 #include <tb/net/http/encoding.hpp>
 #include <tb/net/http/error.hpp>
 
@@ -24,7 +34,7 @@ namespace tb::net::encoding
         zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(in.data()));
         zs.avail_in = static_cast<uInt>(in.size());
 
-        const int init = inflateInit2(&zs, 16 + MAX_WBITS);
+        const int init = inflateInit2(&zs, 16 + MAX_WBITS); // enable gzip header
         if (init != Z_OK)
         {
             ec = errc::decompression_failure;

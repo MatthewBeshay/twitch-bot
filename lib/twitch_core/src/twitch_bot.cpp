@@ -1,3 +1,11 @@
+// Twitch bot core supervisor.
+// Coordinates IRC, Helix, command dispatch, and reconnect/backoff strategy.
+// Rationale:
+// - Serialise all state changes and socket writes via a strand to avoid races.
+// - Keep reconnects bounded and jittered to prevent thundering herd.
+// - Keep control-channel always joined; persist user-joined channels across reconnects.
+
+// C++ Standard Library
 #include <algorithm>
 #include <array>
 #include <iostream>
@@ -6,11 +14,13 @@
 #include <string_view>
 #include <vector>
 
+// Boost.Asio
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/this_coro.hpp>
 
+// Core
 #include <tb/parser/irc_message_parser.hpp>
 #include <tb/twitch/twitch_bot.hpp>
 
@@ -23,10 +33,10 @@ namespace twitch_bot
                          std::string client_secret,
                          std::string control_channel,
                          std::size_t threads)
-        // One pool for I/O; keep it small and fixed
+        // One pool for I/O; keep it small and fixed.
         :
         pool_{ threads > 0 ? threads : 1 }
-        // Serialize all bot state transitions (handlers, sends, reconnect)
+        // Serialise all bot state transitions (handlers, sends, reconnect).
         ,
         strand_{ pool_.get_executor() },
         ssl_ctx_{ boost::asio::ssl::context::tlsv12_client },
@@ -39,13 +49,13 @@ namespace twitch_bot
         dispatcher_{ strand_ },
         helix_client_{ strand_, ssl_ctx_, client_id_, client_secret_, refresh_token_ }
     {
-        // Use platform store (keeps cert management out of the bot)
+        // Use platform store (keeps cert management out of the bot).
         ssl_ctx_.set_default_verify_paths();
     }
 
     TwitchBot::~TwitchBot() noexcept
     {
-        // Best-effort: stop timers and close the socket
+        // Best-effort: stop timers and close the socket.
         irc_client_.close();
     }
 
@@ -56,7 +66,7 @@ namespace twitch_bot
 
     void TwitchBot::run()
     {
-        // Run the supervisor on our strand; block until the pool stops
+        // Run the supervisor on our strand; block until the pool stops.
         boost::asio::co_spawn(strand_, run_bot(), boost::asio::detached);
         pool_.join();
     }
@@ -69,13 +79,13 @@ namespace twitch_bot
 
     boost::asio::awaitable<void> TwitchBot::join_channel(std::string_view channel)
     {
-        // All socket operations go through the strand (shared state + ordering)
+        // All socket operations go through the strand (shared state + ordering).
         co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
 
-        // IRC: JOIN #<channel>
+        // IRC: JOIN #<channel>.
         co_await irc_client_.join(channel);
 
-        // Persist in-memory intent so reconnects re-join
+        // Persist in-memory intent so reconnects re-join.
         {
             std::lock_guard lk(chan_mutex_);
             std::string c{ channel };
@@ -92,19 +102,21 @@ namespace twitch_bot
 
         co_await irc_client_.part(channel);
 
-        // Stop auto-rejoining on future reconnects
+        // Stop auto-rejoining on future reconnects.
         {
             std::lock_guard lk(chan_mutex_);
             const std::string c{ channel };
             auto it = std::find(initial_channels_.begin(), initial_channels_.end(), c);
             if (it != initial_channels_.end())
+            {
                 initial_channels_.erase(it);
+            }
         }
     }
 
     boost::asio::awaitable<void> TwitchBot::say(std::string_view channel, std::string_view text)
     {
-        // Keep ordering and avoid interleaving with other sends
+        // Keep ordering and avoid interleaving with other sends.
         co_await boost::asio::dispatch(strand_, boost::asio::use_awaitable);
         co_await irc_client_.privmsg_wrap(channel, text);
     }
@@ -127,14 +139,14 @@ namespace twitch_bot
     {
         using namespace std::chrono;
 
-        // Reconnect policy: exponential backoff with full jitter
+        // Reconnect policy: exponential backoff with full jitter.
         static constexpr auto k_connect_base = seconds{ 3 };
         static constexpr auto k_reconnect_base = seconds{ 2 };
         static constexpr auto k_backoff_cap = seconds{ 30 };
         static constexpr auto k_min_sleep = milliseconds{ 150 };
 
         auto next_backoff = [](unsigned& attempts, milliseconds base, milliseconds cap) -> milliseconds {
-            // Grows like base * 2^attempts, capped; randomize to avoid thundering herd
+            // Grows like base * 2^attempts, capped; randomise to avoid thundering herd.
             const unsigned exp = std::min<unsigned>(attempts, 16);
             const auto grown = base * (1u << exp);
             const auto max_d = grown > cap ? cap : grown;
@@ -146,7 +158,9 @@ namespace twitch_bot
             ++attempts;
             auto d = milliseconds{ dist(rng) };
             if (d < k_min_sleep)
+            {
                 d = k_min_sleep;
+            }
             return d;
         };
 
@@ -155,20 +169,28 @@ namespace twitch_bot
 
         for (;;)
         {
+            // Snapshot channel list under lock; always include control channel.
             std::vector<std::string_view> channels;
             {
                 std::lock_guard lk(chan_mutex_);
                 channels.reserve(initial_channels_.size() + 1);
                 for (auto& c : initial_channels_)
+                {
                     channels.push_back(c);
+                }
             }
             if (std::find(channels.begin(), channels.end(), control_channel_) == channels.end())
+            {
                 channels.push_back(control_channel_);
+            }
 
+            // Ensure fresh OAuth, then update IRC client token.
             co_await helix_client_.ensure_valid_token();
             std::string access_token = helix_client_.current_token();
             if (access_token.rfind("oauth:", 0) != 0)
+            {
                 access_token = "oauth:" + access_token;
+            }
             irc_client_.set_access_token(access_token);
 
             bool connected = false;
@@ -194,21 +216,25 @@ namespace twitch_bot
                 continue;
             }
 
+            // Connected: reset counters.
             connect_attempts = 0;
             reconnect_attempts = 0;
 
             auto exec = co_await boost::asio::this_coro::executor;
 
+            // Signal used to break out to the reconnect path.
             boost::asio::steady_timer reconnect_signal{ pool_ };
             reconnect_signal.expires_at(std::chrono::steady_clock::time_point::max());
 
             std::string reconnect_reason;
 
+            // Keep the link alive.
             boost::asio::co_spawn(
                 exec,
                 [this]() noexcept -> boost::asio::awaitable<void> { co_await irc_client_.ping_loop(); },
                 boost::asio::detached);
 
+            // Read loop and routing.
             boost::asio::co_spawn(
                 exec,
                 [this, &reconnect_signal, exec, &reconnect_reason]() noexcept
@@ -222,6 +248,7 @@ namespace twitch_bot
 
                                 if (msg.command == "PING")
                                 {
+                                    // Reply with PONG; keep payload as-is.
                                     auto payload = std::string{ msg.trailing };
                                     boost::asio::co_spawn(
                                         exec,
@@ -250,6 +277,7 @@ namespace twitch_bot
 
                                 if (msg.command == "NOTICE")
                                 {
+                                    // Detect auth errors and trigger token refresh.
                                     auto id = msg.get_tag("msg-id");
                                     if (id == "msg_auth_failed" || msg.trailing == "Login authentication failed" || msg.trailing == "Improperly formatted auth")
                                     {
@@ -282,14 +310,16 @@ namespace twitch_bot
                                     return;
                                 }
 
-                                // Normal chat routing
+                                // Normal chat routing.
                                 dispatcher_.dispatch(std::move(msg));
                             });
                     }
                     catch (...)
                     {
                         if (reconnect_reason.empty())
+                        {
                             reconnect_reason = "read-error";
+                        }
                         reconnect_signal.cancel();
                     }
                     co_return;
@@ -302,10 +332,10 @@ namespace twitch_bot
             }
             catch (...)
             {
-                // Woken by cancel(); continue to reconnect
+                // Woken by cancel(); continue to reconnect.
             }
 
-            // Close the current connection before backing off and retrying
+            // Close the current connection before backing off and retrying.
             irc_client_.close();
 
             const auto delay = next_backoff(reconnect_attempts,

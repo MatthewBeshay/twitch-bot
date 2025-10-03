@@ -1,3 +1,18 @@
+/*
+Module Name:
+- config.cpp
+
+Abstract:
+- Load and validate a single TOML config into typed structs.
+- Fail fast with EnvError on missing or invalid fields.
+- Provide a best effort helper to update only the access token.
+
+Why:
+- Strong validation at load time prevents surprising defaults later.
+- Error messages include the file path for quick diagnosis.
+- Token updater edits the minimal subtree so other settings remain intact.
+*/
+
 // C++ Standard Library
 #include <fstream>
 #include <initializer_list>
@@ -7,7 +22,7 @@
 // TOML++
 #include <toml++/toml.hpp>
 
-// Project
+// Core
 #include <tb/twitch/config.hpp>
 
 namespace env
@@ -15,7 +30,8 @@ namespace env
 
     namespace
     {
-        // Return a non-empty string at dotted key path or throw EnvError.
+        // Enforce a non-empty string at a dotted key path or throw.
+        // Why: empty strings often indicate a misconfigured secret or login.
         std::string fetch_string(const toml::table& root,
                                  std::initializer_list<std::string_view> keys,
                                  const std::string& path_str)
@@ -25,20 +41,29 @@ namespace env
             {
                 const auto* table_ptr = node->as_table();
                 if (!table_ptr)
+                {
                     throw EnvError("Expected table while reading '" + path_str + "'");
+                }
                 if (const auto* found = table_ptr->get(key))
+                {
                     node = found;
+                }
                 else
+                {
                     throw EnvError("Missing key '" + std::string{ key } + "' in " + path_str);
+                }
             }
 
             if (auto opt = node->value<std::string>(); opt && !opt->empty())
+            {
                 return *opt;
+            }
 
             throw EnvError("Invalid value in " + path_str);
         }
 
         // Return optional string if present and non-empty.
+        // Why: allow explicit override while keeping a sensible default in code.
         std::string fetch_optional_string(const toml::table& root,
                                           std::initializer_list<std::string_view> keys)
         {
@@ -47,14 +72,22 @@ namespace env
             {
                 const auto* table_ptr = node->as_table();
                 if (!table_ptr)
+                {
                     return {};
+                }
                 if (const auto* found = table_ptr->get(key))
+                {
                     node = found;
+                }
                 else
+                {
                     return {};
+                }
             }
             if (auto opt = node->value<std::string>(); opt && !opt->empty())
+            {
                 return *opt;
+            }
             return {};
         }
     } // namespace
@@ -85,9 +118,10 @@ namespace env
 
         BotConfig bot_cfg{
             .login = fetch_string(tbl, { "twitch", "bot", "login" }, path_str),
-            .control_channel = {}, // filled below (defaults to login)
+            .control_channel = {}, // defaults to login below
         };
         {
+            // Why: control channel typically equals the bot login; allow override when needed.
             auto cc = fetch_optional_string(tbl, { "twitch", "bot", "control_channel" });
             bot_cfg.control_channel = cc.empty() ? bot_cfg.login : std::move(cc);
         }
@@ -103,7 +137,9 @@ namespace env
     Config Config::load_file(const std::filesystem::path& path)
     {
         if (path.string().empty())
+        {
             throw EnvError("Config file path must not be empty");
+        }
         return parse_config(path);
     }
 
@@ -111,7 +147,9 @@ namespace env
     {
         const auto default_path = std::filesystem::current_path() / "config.toml";
         if (!std::filesystem::exists(default_path))
+        {
             throw EnvError("Config file not found at '" + default_path.string() + "'");
+        }
         return parse_config(default_path);
     }
 
@@ -120,6 +158,8 @@ namespace env
     {
     }
 
+    // Best effort token update that creates missing tables when necessary.
+    // Why: rotate credentials at runtime without rewriting unrelated settings.
     bool write_access_token_in_config(const std::filesystem::path& path,
                                       std::string_view new_access_token) noexcept
     {
@@ -156,13 +196,15 @@ namespace env
 
             std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
             if (!ofs)
+            {
                 return false;
+            }
             ofs << tbl;
             return ofs.good();
         }
         catch (...)
         {
-            return false;
+            return false; // keep file unchanged on error
         }
     }
 

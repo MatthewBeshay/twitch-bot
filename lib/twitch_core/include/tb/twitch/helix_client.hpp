@@ -1,3 +1,12 @@
+/*
+Module Name:
+- helix_client.hpp
+
+Abstract:
+- Small Twitch Helix client that caches and refreshes a user access token.
+- Token work is serialised on a strand to avoid concurrent refresh races.
+- Stream status returns optional to signal "no live stream" cleanly without errors.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -17,7 +26,7 @@
 // Glaze
 #include <glaze/json.hpp>
 
-// Project
+// Core
 #include <tb/net/http/http_client.hpp>
 #include <tb/utils/attributes.hpp>
 
@@ -29,7 +38,7 @@ namespace twitch_bot
     struct StreamStatus
     {
         bool is_live{ false };
-        std::chrono::milliseconds start_time{ 0 };
+        std::chrono::milliseconds start_time{ 0 }; // wall-clock origin defined by API payload
     };
 
     class HelixClient
@@ -47,7 +56,8 @@ namespace twitch_bot
         HelixClient& operator=(HelixClient&&) = default;
         ~HelixClient();
 
-        // Ensure we hold a valid access token; refresh with the stored refresh_token if needed.
+        // Ensure we hold a valid access token; refresh using the stored refresh token when needed.
+        // Runs on the strand to prevent duplicate refreshes under load.
         auto ensure_valid_token() -> boost::asio::awaitable<void>;
 
         // Validate the current token via /oauth2/validate and update expiry if valid.
@@ -57,6 +67,7 @@ namespace twitch_bot
         auto refresh_token() -> boost::asio::awaitable<void>;
 
         // Return stream status for the given channel_id.
+        // Returns std::nullopt when no live stream is reported.
         auto get_stream_status(std::string_view channel_id)
             -> boost::asio::awaitable<std::optional<StreamStatus>>;
 
@@ -65,6 +76,7 @@ namespace twitch_bot
             return token_;
         }
 
+        // Optional persistence hook so callers can store newly issued tokens.
         using AccessTokenPersistor = std::function<void(std::string_view)>;
         void set_access_token_persistor(AccessTokenPersistor cb) noexcept
         {
@@ -72,6 +84,7 @@ namespace twitch_bot
         }
 
     private:
+        // Serialises all token state transitions and HTTP calls that depend on them.
         boost::asio::strand<boost::asio::any_io_executor> strand_;
 
         std::string token_;
@@ -82,8 +95,9 @@ namespace twitch_bot
         std::string refresh_token_value_;
 
         boost::asio::any_io_executor executor_;
-        std::unique_ptr<http_client::client> http_client_;
+        std::unique_ptr<http_client::client> http_client_; // shared across requests for connection pooling
 
+        // Kept separate to centralise JSON parsing and error mapping.
         auto fetch_token(std::string body) -> boost::asio::awaitable<void>;
         [[nodiscard]] auto build_refresh_token_request_body() const -> std::string;
     };

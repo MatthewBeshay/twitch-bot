@@ -1,3 +1,14 @@
+/*
+Module Name:
+- channel_store.hpp
+
+Abstract:
+- Thread safe store for Twitch channels and per-channel metadata.
+- Loads from a TOML file, serves queries and updates under a shared mutex,
+  and persists changes using a debounced async save on an Asio strand.
+- Map uses transparent hashing for string_view interoperability and a low
+  load factor to keep lookups cheap.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -17,7 +28,7 @@
 // Toml++
 #include <toml++/toml.hpp>
 
-// Project
+// Core
 #include <tb/utils/attributes.hpp>
 #include <tb/utils/transparent_string_hash.hpp>
 
@@ -31,7 +42,7 @@ inline constexpr float kChannelDataMaxLoadFactor = 0.5F;
 
 // Per-channel metadata.
 struct ChannelInfo {
-    std::optional<std::string> alias; //< user-friendly name
+    std::optional<std::string> alias; // user friendly name
 };
 
 // Load, cache and persist a set of Twitch channels and their aliases.
@@ -39,8 +50,7 @@ struct ChannelInfo {
 class ChannelStore
 {
 public:
-    // Construct the store.
-    // Channels are read from \p filepath on first \ref load().
+    // Channels are read from filepath on first load().
     explicit ChannelStore(boost::asio::any_io_executor executor,
                           const std::filesystem::path& filepath = "channels.toml",
                           std::size_t expected_channels = kDefaultExpectedChannels)
@@ -67,7 +77,7 @@ public:
     // Persist channel data if modified (debounced on a timer).
     void save() const noexcept;
 
-    // --- thread-safe modifiers and queries -------------------------------------
+    // --- thread safe modifiers and queries -------------------------------------
 
     // Add a channel (idempotent). May allocate.
     void add_channel(std::string_view channel);
@@ -75,16 +85,16 @@ public:
     // Remove a channel (noop if absent).
     void remove_channel(std::string_view channel) noexcept;
 
-    // True if \p channel exists.
+    // True if channel exists.
     [[nodiscard]] bool contains(std::string_view channel) const noexcept;
 
-    // Alias for \p channel, if one exists — returns a safe copy to avoid dangling.
+    // Alias for channel, if one exists. Returns a safe copy to avoid dangling.
     [[nodiscard]] std::optional<std::string> get_alias(std::string_view channel) const;
 
     // Set or clear an alias for an existing channel.
     void set_alias(std::string_view channel, std::optional<std::string> alias);
 
-    // Copy the current channel names into \p out (capacity reused).
+    // Copy the current channel names into out (capacity reused).
     // Copies to strings to avoid dangling if the map mutates after return.
     void channel_names(std::vector<std::string_view>& out) const;
 

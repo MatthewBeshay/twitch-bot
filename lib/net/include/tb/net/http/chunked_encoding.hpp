@@ -1,3 +1,14 @@
+/*
+Module Name:
+- chunked_encoding.hpp
+
+Abstract:
+- Minimal, resumable HTTP chunked transfer decoder.
+- Packs flags and remaining byte count into one 64-bit state word to avoid extra fields.
+- Accepts input in arbitrary splits and yields payload slices without copying.
+- Supports chunk extensions and optional trailer consumption.
+- Uses TB_* hints for predictable codegen and zero allocations.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -11,36 +22,37 @@
 #include <optional>
 #include <string_view>
 
-// Project
+// Core
 #include <tb/utils/attributes.hpp>
 
-// State bits for chunked decoder
+// State layout (high to low bits):
+// - bit 63: STATE_HAS_SIZE - size header has been parsed for the current chunk
+// - bit 62: STATE_IS_CHUNKED - we are inside a chunk payload
+// - bits 0..61: remaining byte count for current chunk including its trailing CRLF
+// The all-ones pattern is reserved as an error sentinel.
 static_assert(std::numeric_limits<std::uint64_t>::digits == 64);
 
-constexpr std::uint64_t STATE_HAS_SIZE = (std::uint64_t{ 1 } << 63); // 0x80000000
-constexpr std::uint64_t STATE_IS_CHUNKED = (std::uint64_t{ 1 } << 62); // 0x40000000
-constexpr std::uint64_t STATE_SIZE_MASK = ~(std::uint64_t{ 3 } << 62); // 0x3FFFFFFF
-constexpr std::uint64_t STATE_IS_ERROR = ~std::uint64_t{ 0 }; // 0xFFFFFFFF
+constexpr std::uint64_t STATE_HAS_SIZE = (std::uint64_t{ 1 } << 63);
+constexpr std::uint64_t STATE_IS_CHUNKED = (std::uint64_t{ 1 } << 62);
+constexpr std::uint64_t STATE_SIZE_MASK = ~(std::uint64_t{ 3 } << 62);
+constexpr std::uint64_t STATE_IS_ERROR = ~std::uint64_t{ 0 };
 
 constexpr std::uint64_t CRLF_LEN = 2;
 
-// Build hex-lookup table at compile time
+// Build hex-lookup table at compile time to avoid branching per digit.
 static constexpr auto make_hex_val()
 {
     std::array<unsigned char, 256> tbl{};
     tbl.fill(0xFF);
 
-    // '0'..'9'
     for (unsigned char c = '0'; c <= '9'; ++c)
     {
         tbl[c] = c - '0';
     }
-    // 'A'..'F'
     for (unsigned char c = 'A'; c <= 'F'; ++c)
     {
         tbl[c] = 10 + (c - 'A');
     }
-    // 'a'..'f'
     for (unsigned char c = 'a'; c <= 'f'; ++c)
     {
         tbl[c] = 10 + (c - 'a');
@@ -50,25 +62,22 @@ static constexpr auto make_hex_val()
 
 static constexpr std::array<unsigned char, 256> HEX_VAL = make_hex_val();
 
-// Extract the size bits
 TB_FORCE_INLINE uint64_t chunk_size(uint64_t state) noexcept
 {
     return state & STATE_SIZE_MASK;
 }
 
-// Decrement the size counter
 TB_FORCE_INLINE void dec_chunk_size(uint64_t& state, uint64_t by) noexcept
 {
     state = (state & ~STATE_SIZE_MASK) | (chunk_size(state) - by);
 }
 
-// Has the size header been parsed?
 TB_FORCE_INLINE bool has_chunk_size(uint64_t state) noexcept
 {
     return (state & STATE_HAS_SIZE) != 0;
 }
 
-// True while in the middle of chunked-body or trailer parsing.
+// True while still parsing a chunk or trailers.
 TB_FORCE_INLINE bool is_parsing_chunked_encoding(uint64_t state) noexcept
 {
     return (state & ~STATE_SIZE_MASK) != 0;
@@ -88,18 +97,19 @@ consume_hex_number(const char* TB_RESTRICT& ptr, size_t& len, uint64_t& state) n
     uint64_t size_accum = 0;
     bool saw_digit = false;
 
-    // Accumulate hex digits
+    // Accumulate hex digits with overflow guard against the size field.
     while (len > 0)
     {
         const unsigned char c = static_cast<unsigned char>(*ptr);
         const unsigned char v = HEX_VAL[c];
         if (v == 0xFF)
-            break; // not a hex digit
+        {
+            break;
+        }
 
-        // Overflow guard
         if (size_accum > (STATE_SIZE_MASK >> 4) || ((size_accum << 4) | v) > STATE_SIZE_MASK)
         {
-            state = STATE_IS_ERROR;
+            state = STATE_IS_ERROR; // size would not fit the state word
             return;
         }
         size_accum = (size_accum << 4) | v;
@@ -110,33 +120,32 @@ consume_hex_number(const char* TB_RESTRICT& ptr, size_t& len, uint64_t& state) n
 
     if (!saw_digit)
     {
-        // No hex digits at all: invalid header
-        state = STATE_IS_ERROR;
+        state = STATE_IS_ERROR; // header had no hex digits
         return;
     }
 
-    // Skip optional chunk extensions until CR
+    // Skip any extensions until CR.
     while (len > 0 && *ptr != '\r')
     {
         ++ptr;
         --len;
     }
 
-    // Need CRLF
+    // Require CRLF to finish the header.
     if (len < 2 || ptr[0] != '\r' || ptr[1] != '\n')
     {
-        return; // wait for more bytes
+        return; // need more bytes
     }
     ptr += 2;
     len -= 2;
 
-    // Store size + CRLF length, preserve "chunked mode" flag
+    // Store remaining = payload + CRLF, keep the mode flag for partial payloads.
     state = (size_accum + 2) | STATE_HAS_SIZE | preserved_flags;
 }
 
 // Extract the next data payload from ptr/len.
-// Returns nullopt when no more chunks remain.
-// If an empty view is returned, it signals the zero-size chunk (end of chunks).
+// Returns nullopt when waiting for more data or once trailers are consumed.
+// Returns an empty view exactly at the zero-size chunk marker.
 TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RESTRICT& ptr,
                                                                size_t& len,
                                                                uint64_t& state,
@@ -144,7 +153,7 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
 {
     while (len > 0)
     {
-        // Skip trailer bytes (post-zero-chunk CRLFs)
+        // After zero-size chunk, skip trailer bytes if requested.
         if (!(state & STATE_IS_CHUNKED) && has_chunk_size(state) && chunk_size(state) > 0)
         {
             while (len > 0 && chunk_size(state) > 0)
@@ -161,7 +170,7 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
             return std::nullopt; // need more data to finish skipping
         }
 
-        // Parse a new chunk-size header
+        // Parse a new chunk-size header when needed.
         if (!has_chunk_size(state))
         {
             consume_hex_number(ptr, len, state);
@@ -169,26 +178,24 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
             {
                 return std::nullopt;
             }
-            // Empty-chunk signal (only trailing CRLFs remain)
-            if (has_chunk_size(state) && chunk_size(state) == 2)
+            // Empty chunk: only terminators and optional trailers remain.
+            if (has_chunk_size(state) && chunk_size(state) == CRLF_LEN)
             {
-                // After "0\r\n", there is the chunk terminator CRLF (2),
-                // plus the final empty-line CRLF (2) if we consume trailers here.
                 state = ((trailer ? 4ull : 2ull) | STATE_HAS_SIZE);
-                return {}; // empty view to mark end-of-chunks
+                return {}; // marks end-of-chunks
             }
             continue;
         }
 
-        // Full chunk available?
+        // Full chunk available.
         {
             const uint64_t sz = chunk_size(state);
             if (len >= sz)
             {
                 std::string_view chunk;
-                if (sz > 2)
+                if (sz > CRLF_LEN)
                 {
-                    chunk = std::string_view(ptr, static_cast<size_t>(sz - 2));
+                    chunk = std::string_view(ptr, static_cast<size_t>(sz - CRLF_LEN));
                 }
                 ptr += sz;
                 len -= static_cast<size_t>(sz);
@@ -197,14 +204,14 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
                 {
                     return chunk;
                 }
-                continue; // chunk had no payload; move on
+                continue; // no payload, move to next header
             }
         }
 
-        // Partial chunk payload
+        // Partial payload available.
         {
             const uint64_t sz = chunk_size(state);
-            const size_t payload = (sz > 2 ? static_cast<size_t>(sz - 2) : 0u);
+            const size_t payload = (sz > CRLF_LEN ? static_cast<size_t>(sz - CRLF_LEN) : 0u);
             const size_t nconsume = std::min(len, payload);
             if (nconsume > 0)
             {
@@ -217,23 +224,23 @@ TB_FORCE_INLINE std::optional<std::string_view> get_next_chunk(const char* TB_RE
             }
         }
 
-        // Only (partial) CRLF left for this chunk: keep state, wait for more data
+        // Only partial or full CRLF remains for this chunk.
         return std::nullopt;
     }
 
     return std::nullopt;
 }
 
-// Facilitate range-based for over decoded chunks.
+// Iterator to facilitate range-based for over decoded chunks.
+// Empty view indicates the terminal zero-size chunk.
 struct ChunkIterator
 {
-    const char* TB_RESTRICT ptr; // current read pointer
-    size_t len; // remaining length
-    uint64_t* state; // pointer into external parser state
-    bool trailer; // trailer mode flag
+    const char* TB_RESTRICT ptr;
+    size_t len;
+    uint64_t* state;
+    bool trailer;
     std::optional<std::string_view> chunk;
 
-    // construct with initial buffer ptr/len and state
     ChunkIterator(const char* TB_RESTRICT input_ptr,
                   size_t input_len,
                   uint64_t& input_state,
@@ -243,26 +250,21 @@ struct ChunkIterator
         chunk = get_next_chunk(ptr, len, *state, trailer);
     }
 
-    // end-iterator sentinel
+    // Sentinel for end.
     ChunkIterator() :
         ptr(nullptr), len(0), state(nullptr), trailer(false), chunk(std::nullopt)
     {
     }
 
-    // for range-based for
-    ChunkIterator begin() const
-    {
-        return *this;
-    }
-    ChunkIterator end() const
-    {
-        return {};
-    }
+    ChunkIterator begin() const { return *this; }
+    ChunkIterator end() const { return {}; }
 
     std::string_view operator*() const
     {
         if (!chunk)
-            std::abort();
+        {
+            std::abort(); // misuse: deref after end
+        }
         return *chunk;
     }
 
@@ -273,7 +275,6 @@ struct ChunkIterator
 
     ChunkIterator& operator++()
     {
-        // Only called when chunk has value and state!=nullptr
         chunk = get_next_chunk(ptr, len, *state, trailer);
         return *this;
     }

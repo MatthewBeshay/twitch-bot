@@ -1,3 +1,27 @@
+/*
+Module: integrations.cpp
+
+Purpose:
+- Load third-party integration credentials from a TOML file and allow
+  environment-variable overrides at runtime.
+
+Why:
+- Keep secrets/config external to the binary and make deployments flexible:
+  operators can override specific keys without editing files.
+
+Notes:
+- Services are case-insensitive: names are Normalised to lowercase ASCII.
+- Env precedence (case-insensitive service/key):
+    1) INTEGRATIONS_<SERVICE>_<KEY>
+    2) <SERVICE>_<KEY>
+    3) Special case for "api_key": <SERVICE>_API_KEY
+- Only string values from the TOML are accepted; non-string entries are ignored.
+- Windows uses _dupenv_s for a safer getenv; other platforms use std::getenv.
+- Errors:
+    * load/load_file throw EnvError when the file is missing/unreadable.
+    * get throws EnvError if the requested value cannot be resolved from env or file.
+*/
+
 // C++ Standard Library
 #include <cstdlib>
 #include <filesystem>
@@ -16,8 +40,8 @@ namespace app
 {
     namespace
     {
+        // ---------- ASCII helpers (no locale) -----------------------------------
 
-        // ASCII predicates/transforms (no locale).
         constexpr bool is_ascii_alnum(unsigned char c) noexcept
         {
             return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
@@ -32,7 +56,7 @@ namespace app
         }
 
 #ifdef _WIN32
-        // MSVC-safe getenv (avoids C4996).
+        // getenv wrapper that returns std::optional and avoids MSVC C4996.
         static std::optional<std::string> getenv_nonempty(const char* name) noexcept
         {
             if (!name)
@@ -54,6 +78,7 @@ namespace app
             return out;
         }
 #else
+        // Portable getenv wrapper that filters out empty strings.
         static std::optional<std::string> getenv_nonempty(const char* name) noexcept
         {
             if (!name)
@@ -69,6 +94,8 @@ namespace app
 #endif
 
     } // namespace
+
+    // ---------- Public API -------------------------------------------------------
 
     Integrations Integrations::load()
     {
@@ -101,6 +128,7 @@ namespace app
 
     std::string Integrations::get(std::string_view service, std::string_view key) const
     {
+        // Env overrides take precedence.
         if (auto e = env_override(service, key))
         {
             return *e;
@@ -155,7 +183,8 @@ namespace app
             return {};
         }
 
-        auto out = it->second; // copy file values
+        // Start with file values; overlay env where present.
+        auto out = it->second;
         for (auto& [k, v] : out)
         {
             if (auto e = env_override(service, k))
@@ -165,6 +194,8 @@ namespace app
         }
         return out;
     }
+
+    // ---------- File/env parsing helpers ----------------------------------------
 
     Integrations Integrations::parse_file(const std::filesystem::path& path)
     {
@@ -191,7 +222,7 @@ namespace app
             {
                 if (!svc_node.is_table())
                 {
-                    continue;
+                    continue; // ignore non-table entries
                 }
                 const auto svc_name = to_lower_ascii(svc_key.str());
 
@@ -228,9 +259,11 @@ namespace app
         return out;
     }
 
+    // Build env var names and return the first non-empty match by precedence.
     std::optional<std::string> Integrations::env_override(std::string_view service,
                                                           std::string_view key)
     {
+        // Construct ENV name components in ASCII/underscore form.
         const auto mk = [](std::string_view a, std::string_view b, std::string_view c) {
             std::string s;
             s.reserve(a.size() + b.size() + c.size() + 2);
@@ -254,18 +287,21 @@ namespace app
             return s;
         };
 
+        // 1) INTEGRATIONS_<SERVICE>_<KEY>
         const auto primary = mk("INTEGRATIONS", service, key);
         if (auto v = getenv_nonempty(primary.c_str()))
         {
             return v;
         }
 
+        // 2) <SERVICE>_<KEY>
         const auto fallback1 = mk(service, key, "");
         if (auto v = getenv_nonempty(fallback1.c_str()))
         {
             return v;
         }
 
+        // 3) Special case: <SERVICE>_API_KEY when key == "api_key"
         if (key == "api_key")
         {
             const auto fallback2 = mk(service, "API_KEY", "");

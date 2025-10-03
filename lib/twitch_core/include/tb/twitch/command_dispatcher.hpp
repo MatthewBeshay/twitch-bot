@@ -1,3 +1,12 @@
+/*
+Module Name:
+- command_dispatcher.hpp
+
+Abstract:
+- Routes parsed IRC messages and plain chat lines to command handlers.
+- Handlers run on a supplied Asio executor to keep call sites thread agnostic.
+- Commands are case sensitive and keyed without allocations via transparent hashing.
+*/
 #pragma once
 
 // C++ Standard Library
@@ -11,7 +20,7 @@
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 
-// Project
+// Core
 #include <tb/parser/irc_message_parser.hpp>
 #include <tb/utils/attributes.hpp>
 #include <tb/utils/transparent_string_hash.hpp>
@@ -19,48 +28,47 @@
 namespace twitch_bot
 {
 
-    // Callback for plain chat lines.
+    // Plain chat listener for non-command lines.
     using chat_listener_t = std::function<void(std::string_view channel, std::string_view user, std::string_view text)>;
 
-    // Callback for an IRC command (runs on an executor).
+    // Coroutine handler for an IRC command.
     using command_handler_t = std::function<boost::asio::awaitable<void>(IrcMessage msg)>;
 
     // Routes IRC messages to command handlers or chat listeners.
     class CommandDispatcher
     {
     public:
-        // Create a dispatcher that spawns work on \p executor.
+        // Work is posted onto executor so dispatch() can be called from any thread.
         explicit CommandDispatcher(boost::asio::any_io_executor executor);
 
-        // Add a handler for \p command (case-sensitive).
+        // Register a handler for 'command' (case sensitive). Later calls replace earlier ones.
         void register_command(std::string_view command, command_handler_t handler);
 
-        // Add a fallback listener for unhandled chat lines.
+        // Register a fallback listener for non-command chat lines.
         void register_chat_listener(chat_listener_t listener);
 
-        // Dispatch a plain chat line without IRC types.
-        // Expects channel with no leading '#' and user as the login name.
-        // Safe to call from any thread; handlers run on the stored executor.
+        // Dispatch a raw chat line. Channel should not include '#'; user is the login name.
+        // Useful when upstream did not keep the full IRC prefix.
         void dispatch_text(std::string_view channel, std::string_view user, std::string_view text);
 
-        // Dispatch \p msg asynchronously.
+        // Dispatch a parsed IRC message.
         void dispatch(IrcMessage msg);
 
     private:
-        // Strip a leading '#'.
-        static TB_FORCE_INLINE std::string_view normalize_channel(std::string_view raw) noexcept
+        // Keep channel keys uniform - most code expects names without '#'.
+        static TB_FORCE_INLINE std::string_view Normalise_channel(std::string_view raw) noexcept
         {
             return (!raw.empty() && raw.front() == '#') ? raw.substr(1) : raw;
         }
 
-        // Part before '!' in \p prefix.
+        // Fast path to the login part in "login!ident@host".
         static TB_FORCE_INLINE std::string_view extract_user(std::string_view prefix) noexcept
         {
             auto pos = prefix.find('!');
             return (pos != std::string_view::npos) ? prefix.substr(0, pos) : prefix;
         }
 
-        // Split "!cmd args" into \p out_cmd and \p out_args.
+        // Avoid heap work when splitting a potential command; cheap checks first.
         static TB_FORCE_INLINE void split_command(std::string_view text,
                                                   std::string_view& out_cmd,
                                                   std::string_view& out_args) noexcept
@@ -94,8 +102,8 @@ namespace twitch_bot
             commands_;
         std::vector<chat_listener_t> chat_listeners_;
 
-        // Route helper that can optionally include tags and role flags from the source message.
-        // Channel must be normalized (no '#'). User must be the login part.
+        // Single routing point so both IRC and raw-chat paths share behaviour.
+        // raw_tags and role flags are optional; supply when available to avoid re-parsing.
         void route_text(std::string_view channel,
                         std::string_view user,
                         std::string_view text,
