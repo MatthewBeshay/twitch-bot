@@ -8,7 +8,6 @@ add_library(tb_twitch_core STATIC)
 target_sources(
   tb_twitch_core
   PRIVATE
-    src/chat_rate_limiter.cpp
     src/command_dispatcher.cpp
     src/config.cpp
     src/helix_client.cpp
@@ -20,7 +19,6 @@ target_sources(
       FILES
         include/tb/parser/irc_message_parser.hpp
         include/tb/parser/irc_simd_scan.hpp
-        include/tb/twitch/chat_rate_limiter.hpp
         include/tb/twitch/command_dispatcher.hpp
         include/tb/twitch/config.hpp
         include/tb/twitch/helix_client.hpp
